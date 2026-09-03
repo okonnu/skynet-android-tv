@@ -45,3 +45,16 @@ After the Android SDK is installed and `local.properties` points to it:
 ```
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Cable edition
+
+The Cable product flavor is a separate Android TV app that uses normal WebView
+focus navigation only: D-pad arrows change focus and Enter activates the selected
+control. It has no on-screen pointer and does not generate mouse or touch events.
+
+```sh
+./gradlew assembleCableRelease
+```
+
+The Cable release APK is written to
+`app/build/outputs/apk/cable/release/app-cable-release.apk`.

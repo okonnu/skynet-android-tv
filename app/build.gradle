@@ -14,6 +14,26 @@ android {
         versionName "2.1.0"
     }
 
+    flavorDimensions "navigation"
+
+    productFlavors {
+        skynet {
+            dimension "navigation"
+            buildConfigField "boolean", "POINTER_ENABLED", "true"
+        }
+        cable {
+            dimension "navigation"
+            applicationId "com.pepea.cable"
+            versionCode 1
+            versionName "1.0.0"
+            buildConfigField "boolean", "POINTER_ENABLED", "false"
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17

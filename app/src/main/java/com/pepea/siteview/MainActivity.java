@@ -46,6 +46,7 @@ public final class MainActivity extends Activity {
     private static final int SITE_SETUP_SCHEMA = 1;
     private static final String KEY_AD_BLOCKING = "ad_blocking";
     private static final int FILE_CHOOSER_REQUEST = 41;
+    private static final boolean POINTER_ENABLED = BuildConfig.POINTER_ENABLED;
 
     private SharedPreferences preferences;
     private boolean adBlockingEnabled;
@@ -153,20 +154,26 @@ public final class MainActivity extends Activity {
         spinnerParams.gravity = android.view.Gravity.CENTER;
         root.addView(loadingSpinner, spinnerParams);
 
-        cursorView = new TvCursorView(this);
-        FrameLayout.LayoutParams cursorParams = new FrameLayout.LayoutParams(dp(56), dp(56));
-        root.addView(cursorView, cursorParams);
-        cursorEnabled = isTvDevice;
-        cursorView.setVisibility(cursorEnabled ? View.VISIBLE : View.GONE);
+        if (POINTER_ENABLED) {
+            cursorView = new TvCursorView(this);
+            FrameLayout.LayoutParams cursorParams = new FrameLayout.LayoutParams(dp(56), dp(56));
+            root.addView(cursorView, cursorParams);
+            cursorEnabled = isTvDevice;
+            cursorView.setVisibility(cursorEnabled ? View.VISIBLE : View.GONE);
+        }
 
         setContentView(root);
         root.post(() -> {
-            cursorX = root.getWidth() / 2f;
-            cursorY = root.getHeight() / 2f;
-            updateCursorPosition();
-            if (cursorEnabled) {
-                showCursorForInput();
-                scheduleCursorHide();
+            if (POINTER_ENABLED) {
+                cursorX = root.getWidth() / 2f;
+                cursorY = root.getHeight() / 2f;
+                updateCursorPosition();
+                if (cursorEnabled) {
+                    showCursorForInput();
+                    scheduleCursorHide();
+                }
+            } else {
+                webView.requestFocus();
             }
         });
     }
@@ -239,7 +246,7 @@ public final class MainActivity extends Activity {
         public void onPageCommitVisible(WebView view, String url) {
             super.onPageCommitVisible(view, url);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
-                injectCursorStyling(view);
+                injectNavigationStyling(view);
             }
         }
 
@@ -252,9 +259,11 @@ public final class MainActivity extends Activity {
             lastAllowedUrl = url;
             hideLoadingSpinner();
             injectCosmeticFiltering(view);
-            injectCursorStyling(view);
+            injectNavigationStyling(view);
             if (cursorEnabled) {
                 dispatchHoverEvent();
+            } else {
+                view.requestFocus();
             }
         }
 
@@ -389,6 +398,27 @@ public final class MainActivity extends Activity {
         view.evaluateJavascript(script, null);
     }
 
+    private void injectFocusStyling(WebView view) {
+        String script = "(function(){" +
+                "if(document.getElementById('siteview-focus-style'))return;" +
+                "var s=document.createElement('style');s.id='siteview-focus-style';" +
+                "s.textContent='a[href]:focus,button:focus,input:focus,select:focus,textarea:focus," +
+                "[role=button]:focus,[role=link]:focus,[role=menuitem]:focus,[role=tab]:focus," +
+                "[tabindex]:focus{outline:1px solid rgba(255,184,112,.58)!important;" +
+                "outline-offset:2px!important;box-shadow:0 4px 12px rgba(0,0,0,.30)," +
+                "0 0 0 2px rgba(255,126,24,.16)!important;border-radius:8px!important}';" +
+                "(document.head||document.documentElement).appendChild(s);})();";
+        view.evaluateJavascript(script, null);
+    }
+
+    private void injectNavigationStyling(WebView view) {
+        if (POINTER_ENABLED) {
+            injectCursorStyling(view);
+        } else {
+            injectFocusStyling(view);
+        }
+    }
+
     private void showUrlDialog(boolean cancelable) {
         urlDialogVisible = true;
         LinearLayout container = new LinearLayout(this);
@@ -509,7 +539,7 @@ public final class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (urlDialogVisible || customView != null) {
+        if (!POINTER_ENABLED || urlDialogVisible || customView != null) {
             return super.dispatchKeyEvent(event);
         }
 
