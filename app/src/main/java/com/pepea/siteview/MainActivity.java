@@ -47,6 +47,153 @@ public final class MainActivity extends Activity {
     private static final String KEY_AD_BLOCKING = "ad_blocking";
     private static final int FILE_CHOOSER_REQUEST = 41;
     private static final boolean POINTER_ENABLED = BuildConfig.POINTER_ENABLED;
+    /*
+     * Cable uses this only after a D-pad press.  It deliberately has no mutation
+     * observer, timer, or animation loop: a short-lived geometry cache makes held
+     * arrows responsive without adding background work to the loaded website.
+     */
+    private static final String SPATIAL_NAVIGATION_INSTALLER = """
+            (function() {
+              if (window.siteviewSpatialNavigation) return;
+
+              var selector = 'a[href],area[href],button,input:not([type="hidden"]),select,textarea,' +
+                  'iframe,video[controls],[role="button"],[role="link"],[role="menuitem"],' +
+                  '[role="tab"],[role="option"],[role="checkbox"],[role="radio"],' +
+                  '[contenteditable="true"],[tabindex]:not([tabindex="-1"])';
+              var cache = { at: 0, x: NaN, y: NaN, candidates: [] };
+              var cacheLifetimeMs = 140;
+
+              function visibleCandidate(element) {
+                if (!(element instanceof HTMLElement) || element.disabled ||
+                    element.getAttribute('aria-hidden') === 'true' || element.closest('[inert]')) {
+                  return null;
+                }
+                var style = window.getComputedStyle(element);
+                if (style.display === 'none' || style.visibility !== 'visible' ||
+                    Number(style.opacity) === 0 || style.pointerEvents === 'none') {
+                  return null;
+                }
+                var rect = element.getBoundingClientRect();
+                if (rect.width < 4 || rect.height < 4 || rect.right < 0 || rect.bottom < 0 ||
+                    rect.left > window.innerWidth || rect.top > window.innerHeight) {
+                  return null;
+                }
+                return {
+                  element: element,
+                  left: rect.left,
+                  right: rect.right,
+                  top: rect.top,
+                  bottom: rect.bottom,
+                  cx: (rect.left + rect.right) / 2,
+                  cy: (rect.top + rect.bottom) / 2
+                };
+              }
+
+              function candidates() {
+                var now = performance.now();
+                if (now - cache.at < cacheLifetimeMs && cache.x === window.scrollX && cache.y === window.scrollY) {
+                  return cache.candidates;
+                }
+                var nodes = document.querySelectorAll(selector);
+                var next = [];
+                for (var i = 0; i < nodes.length; i++) {
+                  var candidate = visibleCandidate(nodes[i]);
+                  if (candidate) next.push(candidate);
+                }
+                cache = { at: now, x: window.scrollX, y: window.scrollY, candidates: next };
+                return next;
+              }
+
+              function currentCandidate() {
+                var active = document.activeElement;
+                if (!active || active === document.body || active === document.documentElement) return null;
+                if (!active.matches(selector)) active = active.closest(selector);
+                return active ? visibleCandidate(active) : null;
+              }
+
+              function edgeAnchor(direction) {
+                var width = window.innerWidth;
+                var height = window.innerHeight;
+                if (direction === 'up') return { left: width / 2, right: width / 2, top: height, bottom: height, cx: width / 2, cy: height };
+                if (direction === 'left') return { left: width, right: width, top: height / 2, bottom: height / 2, cx: width, cy: height / 2 };
+                if (direction === 'right') return { left: 0, right: 0, top: height / 2, bottom: height / 2, cx: 0, cy: height / 2 };
+                return { left: width / 2, right: width / 2, top: 0, bottom: 0, cx: width / 2, cy: 0 };
+              }
+
+              function measures(anchor, candidate, direction) {
+                if (direction === 'up') {
+                  return { forward: anchor.cy - candidate.cy, lateral: Math.abs(candidate.cx - anchor.cx),
+                    overlaps: candidate.right >= anchor.left && candidate.left <= anchor.right };
+                }
+                if (direction === 'left') {
+                  return { forward: anchor.cx - candidate.cx, lateral: Math.abs(candidate.cy - anchor.cy),
+                    overlaps: candidate.bottom >= anchor.top && candidate.top <= anchor.bottom };
+                }
+                if (direction === 'right') {
+                  return { forward: candidate.cx - anchor.cx, lateral: Math.abs(candidate.cy - anchor.cy),
+                    overlaps: candidate.bottom >= anchor.top && candidate.top <= anchor.bottom };
+                }
+                return { forward: candidate.cy - anchor.cy, lateral: Math.abs(candidate.cx - anchor.cx),
+                  overlaps: candidate.right >= anchor.left && candidate.left <= anchor.right };
+              }
+
+              function bestCandidate(direction) {
+                var current = currentCandidate();
+                var anchor = current || edgeAnchor(direction);
+                var items = candidates();
+                var aligned = null;
+                var directional = null;
+                var alignedScore = Infinity;
+                var directionalScore = Infinity;
+                for (var i = 0; i < items.length; i++) {
+                  var item = items[i];
+                  if (current && item.element === current.element) continue;
+                  var distance = measures(anchor, item, direction);
+                  if (distance.forward <= 3) continue;
+                  if (distance.overlaps) {
+                    var directScore = distance.forward + distance.lateral * 0.18;
+                    if (directScore < alignedScore) {
+                      aligned = item;
+                      alignedScore = directScore;
+                    }
+                  } else if (distance.forward >= distance.lateral * 0.55) {
+                    var coneScore = distance.forward + distance.lateral * 0.50;
+                    if (coneScore < directionalScore) {
+                      directional = item;
+                      directionalScore = coneScore;
+                    }
+                  }
+                }
+                return aligned || directional;
+              }
+
+              function scroll(direction) {
+                var amount = Math.max(120, Math.round((direction === 'up' || direction === 'down' ? window.innerHeight : window.innerWidth) * 0.68));
+                if (direction === 'up') window.scrollBy({ top: -amount, behavior: 'auto' });
+                else if (direction === 'left') window.scrollBy({ left: -amount, behavior: 'auto' });
+                else if (direction === 'right') window.scrollBy({ left: amount, behavior: 'auto' });
+                else window.scrollBy({ top: amount, behavior: 'auto' });
+              }
+
+              window.siteviewSpatialNavigation = {
+                move: function(direction) {
+                  var next = bestCandidate(direction);
+                  if (!next) {
+                    scroll(direction);
+                    return 'scrolled';
+                  }
+                  try {
+                    next.element.focus({ preventScroll: true });
+                  } catch (ignored) {
+                    next.element.focus();
+                  }
+                  next.element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+                  cache.at = 0;
+                  return 'focused';
+                }
+              };
+            })();
+            """;
 
     private SharedPreferences preferences;
     private boolean adBlockingEnabled;
@@ -416,7 +563,12 @@ public final class MainActivity extends Activity {
             injectCursorStyling(view);
         } else {
             injectFocusStyling(view);
+            injectSpatialNavigation(view);
         }
+    }
+
+    private void injectSpatialNavigation(WebView view) {
+        view.evaluateJavascript(SPATIAL_NAVIGATION_INSTALLER, null);
     }
 
     private void showUrlDialog(boolean cancelable) {
@@ -539,7 +691,7 @@ public final class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (!POINTER_ENABLED || urlDialogVisible || customView != null) {
+        if (urlDialogVisible || customView != null) {
             return super.dispatchKeyEvent(event);
         }
 
@@ -551,6 +703,16 @@ public final class MainActivity extends Activity {
         boolean click = keyCode == KeyEvent.KEYCODE_DPAD_CENTER
                 || keyCode == KeyEvent.KEYCODE_ENTER
                 || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER;
+
+        if (!POINTER_ENABLED) {
+            if (directional) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    moveSpatialFocus(keyCode);
+                }
+                return true;
+            }
+            return super.dispatchKeyEvent(event);
+        }
 
         if (directional) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
@@ -579,6 +741,22 @@ public final class MainActivity extends Activity {
         }
 
         return super.dispatchKeyEvent(event);
+    }
+
+    private void moveSpatialFocus(int keyCode) {
+        String direction;
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+            direction = "up";
+        } else if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+            direction = "left";
+        } else if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            direction = "right";
+        } else {
+            direction = "down";
+        }
+        webView.evaluateJavascript(
+                "window.siteviewSpatialNavigation&&window.siteviewSpatialNavigation.move('" + direction + "');",
+                null);
     }
 
     private boolean ensureCursorVisible() {

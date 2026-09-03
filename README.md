@@ -48,9 +48,13 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Cable edition
 
-The Cable product flavor is a separate Android TV app that uses normal WebView
-focus navigation only: D-pad arrows change focus and Enter activates the selected
-control. It has no on-screen pointer and does not generate mouse or touch events.
+The Cable product flavor is a separate Android TV app with no on-screen pointer.
+Its D-pad navigation selects the nearest visible, compatible web control in the
+pressed direction (preferring controls directly above, below, left, or right of
+the current selection); Enter activates the selected control. If no compatible
+control is visible in that direction, the page scrolls. The geometry is collected
+only after an arrow press and kept in a brief cache for held arrows, so it adds no
+continuous page monitoring or video-rendering work.
 
 ```sh
 ./gradlew assembleCableRelease
