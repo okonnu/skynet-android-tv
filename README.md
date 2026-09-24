@@ -39,7 +39,12 @@ can break authentication, payments, analytics-dependent dashboards, and CDNs.
 
 ## Build
 
-After the Android SDK is installed and `local.properties` points to it:
+Install the Android SDK once outside the repository. On this PC, the shared SDK
+is at `/home/okonu/Android/Sdk`, and the ignored `local.properties` file contains
+`sdk.dir=/home/okonu/Android/Sdk`. Other developers should point that file to
+their own shared SDK location; do not copy the SDK into this project.
+
+Then build with:
 
 ```sh
 ./gradlew assembleDebug
