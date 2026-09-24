@@ -71,7 +71,8 @@ public final class MainActivity extends Activity {
     private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
     private static final String KEY_UPDATE_VERSION = "update_version";
     private static final int FILE_CHOOSER_REQUEST = 41;
-    private static final int LOCKED_PAGE_SCALE_PERCENT = 90;
+    private static final int DEFAULT_PAGE_SCALE_PERCENT = 90;
+    private static final int TV_DESKTOP_VIEWPORT_WIDTH_CSS_PX = 1200;
     private static final long UPDATE_CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L;
     private static final String GITHUB_RELEASES_URL =
             "https://api.github.com/repos/okonnu/skynet-android-tv/releases?per_page=20";
@@ -306,6 +307,7 @@ public final class MainActivity extends Activity {
             showUrlDialog(false);
         } else {
             lastAllowedUrl = homeUrl;
+            configureViewportForUrl(webView, homeUrl);
             if (savedInstanceState == null || resetSavedSite
                     || webView.restoreState(savedInstanceState) == null) {
                 webView.loadUrl(homeUrl);
@@ -411,7 +413,38 @@ public final class MainActivity extends Activity {
 
         webView.setWebViewClient(new SiteViewClient());
         webView.setWebChromeClient(new SiteChromeClient());
-        webView.setInitialScale(LOCKED_PAGE_SCALE_PERCENT);
+        webView.setInitialScale(DEFAULT_PAGE_SCALE_PERCENT);
+    }
+
+    private boolean useTvDesktopViewport(String url) {
+        if (!isTvDevice || !"cable".equals(BuildConfig.FLAVOR) || url == null) {
+            return false;
+        }
+        Uri uri = Uri.parse(url);
+        String host = uri.getHost();
+        return "https".equalsIgnoreCase(uri.getScheme())
+                && ("pantyflix.com".equalsIgnoreCase(host)
+                || "www.pantyflix.com".equalsIgnoreCase(host));
+    }
+
+    private void configureViewportForUrl(WebView view, String url) {
+        boolean desktopViewport = useTvDesktopViewport(url);
+        view.getSettings().setLoadWithOverviewMode(desktopViewport);
+        view.setInitialScale(desktopViewport ? 0 : DEFAULT_PAGE_SCALE_PERCENT);
+    }
+
+    private void injectTvDesktopViewport(WebView view, String url) {
+        if (!useTvDesktopViewport(url)) {
+            return;
+        }
+        // This site's floating mobile navigation is hidden at 1024 CSS pixels.
+        // A 1200px layout viewport keeps the desktop layout while overview mode fits it on TV.
+        String script = "(function(){if(!document.head)return;" +
+                "var m=document.querySelector('meta[name=\"viewport\"]');" +
+                "if(!m){m=document.createElement('meta');m.name='viewport';document.head.appendChild(m);}" +
+                "if(m.content!=='width=" + TV_DESKTOP_VIEWPORT_WIDTH_CSS_PX +
+                "')m.content='width=" + TV_DESKTOP_VIEWPORT_WIDTH_CSS_PX + "';})();";
+        view.evaluateJavascript(script, null);
     }
 
     @Override
@@ -684,7 +717,7 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
-            view.setInitialScale(LOCKED_PAGE_SCALE_PERCENT);
+            configureViewportForUrl(view, url);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
                 showLoadingSpinner();
                 return;
@@ -700,6 +733,7 @@ public final class MainActivity extends Activity {
         public void onPageCommitVisible(WebView view, String url) {
             super.onPageCommitVisible(view, url);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
+                injectTvDesktopViewport(view, url);
                 injectNavigationStyling(view);
             }
         }
@@ -711,6 +745,7 @@ public final class MainActivity extends Activity {
                 return;
             }
             lastAllowedUrl = url;
+            injectTvDesktopViewport(view, url);
             hideLoadingSpinner();
             injectCosmeticFiltering(view);
             injectNavigationStyling(view);
@@ -909,6 +944,7 @@ public final class MainActivity extends Activity {
                     preferences.edit().putString(KEY_HOME_URL, normalized).apply();
                     lastAllowedUrl = normalized;
                     dialog.dismiss();
+                    configureViewportForUrl(webView, normalized);
                     webView.loadUrl(normalized);
                 }));
         dialog.setOnDismissListener(ignored -> {
