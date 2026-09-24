@@ -42,6 +42,7 @@ import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -70,9 +71,10 @@ public final class MainActivity extends Activity {
     private static final String KEY_UPDATE_LAST_CHECK = "update_last_check";
     private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
     private static final String KEY_UPDATE_VERSION = "update_version";
+    private static final String KEY_ZOOM_PERCENT = "zoom_percent";
     private static final int FILE_CHOOSER_REQUEST = 41;
     private static final int DEFAULT_PAGE_SCALE_PERCENT = 90;
-    private static final int TV_DESKTOP_VIEWPORT_WIDTH_CSS_PX = 1200;
+    private static final int[] ZOOM_OPTIONS = {50, 60, 70, 80, 90, 100, 110};
     private static final long UPDATE_CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L;
     private static final String GITHUB_RELEASES_URL =
             "https://api.github.com/repos/okonnu/skynet-android-tv/releases?per_page=20";
@@ -236,6 +238,8 @@ public final class MainActivity extends Activity {
     private FrameLayout root;
     private ProgressBar loadingSpinner;
     private TextView versionBadge;
+    private PopupMenu zoomMenu;
+    private boolean zoomMenuOpen;
     private boolean isTvDevice;
     private TvCursorView cursorView;
     private float cursorX;
@@ -307,7 +311,6 @@ public final class MainActivity extends Activity {
             showUrlDialog(false);
         } else {
             lastAllowedUrl = homeUrl;
-            configureViewportForUrl(webView, homeUrl);
             if (savedInstanceState == null || resetSavedSite
                     || webView.restoreState(savedInstanceState) == null) {
                 webView.loadUrl(homeUrl);
@@ -328,10 +331,20 @@ public final class MainActivity extends Activity {
         versionBadge.setTextColor(Color.argb(210, 255, 255, 255));
         versionBadge.setTextSize(9);
         versionBadge.setIncludeFontPadding(false);
-        versionBadge.setPadding(dp(5), dp(3), dp(5), dp(3));
-        versionBadge.setClickable(false);
-        versionBadge.setFocusable(false);
-        versionBadge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        versionBadge.setPadding(dp(8), dp(6), dp(8), dp(6));
+        if (useTvZoomControl()) {
+            versionBadge.setMinWidth(dp(92));
+            versionBadge.setMinHeight(dp(36));
+            versionBadge.setGravity(android.view.Gravity.CENTER);
+            versionBadge.setClickable(true);
+            versionBadge.setFocusable(true);
+            versionBadge.setOnClickListener(ignored -> showZoomMenu());
+            updateZoomBadge();
+        } else {
+            versionBadge.setClickable(false);
+            versionBadge.setFocusable(false);
+            versionBadge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
         versionBadge.setElevation(dp(24));
         GradientDrawable badgeBackground = new GradientDrawable();
         badgeBackground.setColor(Color.argb(120, 0, 0, 0));
@@ -356,6 +369,7 @@ public final class MainActivity extends Activity {
             cursorView = new TvCursorView(this);
             FrameLayout.LayoutParams cursorParams = new FrameLayout.LayoutParams(dp(56), dp(56));
             root.addView(cursorView, cursorParams);
+            cursorView.setElevation(dp(32));
             cursorEnabled = isTvDevice;
             cursorView.setVisibility(cursorEnabled ? View.VISIBLE : View.GONE);
         }
@@ -413,38 +427,86 @@ public final class MainActivity extends Activity {
 
         webView.setWebViewClient(new SiteViewClient());
         webView.setWebChromeClient(new SiteChromeClient());
-        webView.setInitialScale(DEFAULT_PAGE_SCALE_PERCENT);
+        configureWebViewScale(webView);
     }
 
-    private boolean useTvDesktopViewport(String url) {
-        if (!isTvDevice || !"cable".equals(BuildConfig.FLAVOR) || url == null) {
-            return false;
+    private boolean useTvZoomControl() {
+        return isTvDevice && "cable".equals(BuildConfig.FLAVOR);
+    }
+
+    private int selectedZoomPercent() {
+        int selected = preferences.getInt(KEY_ZOOM_PERCENT, DEFAULT_PAGE_SCALE_PERCENT);
+        for (int option : ZOOM_OPTIONS) {
+            if (option == selected) {
+                return selected;
+            }
         }
-        Uri uri = Uri.parse(url);
-        String host = uri.getHost();
-        return "https".equalsIgnoreCase(uri.getScheme())
-                && ("pantyflix.com".equalsIgnoreCase(host)
-                || "www.pantyflix.com".equalsIgnoreCase(host));
+        return DEFAULT_PAGE_SCALE_PERCENT;
     }
 
-    private void configureViewportForUrl(WebView view, String url) {
-        boolean desktopViewport = useTvDesktopViewport(url);
-        view.getSettings().setLoadWithOverviewMode(desktopViewport);
-        view.setInitialScale(desktopViewport ? 0 : DEFAULT_PAGE_SCALE_PERCENT);
+    private void configureWebViewScale(WebView view) {
+        view.getSettings().setLoadWithOverviewMode(useTvZoomControl());
+        view.setInitialScale(useTvZoomControl() ? 0 : DEFAULT_PAGE_SCALE_PERCENT);
     }
 
-    private void injectTvDesktopViewport(WebView view, String url) {
-        if (!useTvDesktopViewport(url)) {
+    private void injectSelectedZoom(WebView view) {
+        if (!useTvZoomControl()) {
             return;
         }
-        // This site's floating mobile navigation is hidden at 1024 CSS pixels.
-        // A 1200px layout viewport keeps the desktop layout while overview mode fits it on TV.
+        int percent = selectedZoomPercent();
+        String scale = Float.toString(percent / 100f);
+        // Viewport metadata accounts for TV density and changes responsive CSS breakpoints.
+        // A one-time update on navigation avoids a page observer or animation loop.
         String script = "(function(){if(!document.head)return;" +
                 "var m=document.querySelector('meta[name=\"viewport\"]');" +
                 "if(!m){m=document.createElement('meta');m.name='viewport';document.head.appendChild(m);}" +
-                "if(m.content!=='width=" + TV_DESKTOP_VIEWPORT_WIDTH_CSS_PX +
-                "')m.content='width=" + TV_DESKTOP_VIEWPORT_WIDTH_CSS_PX + "';})();";
+                "var original=m.getAttribute('data-cable-original-viewport');" +
+                "if(original===null){original=m.content||'';m.setAttribute('data-cable-original-viewport',original);}" +
+                "var extra=original.split(',').map(function(s){return s.trim();})" +
+                ".filter(function(s){return s&&!/^(width|initial-scale|minimum-scale|maximum-scale)\\s*=/i.test(s);})" +
+                ".join(', ');" +
+                "var width=Math.max(1,Math.round(screen.width*100/" + percent + "));" +
+                "var content='width='+width+', initial-scale=" + scale + "'+(extra?', '+extra:'');" +
+                "if(m.content!==content)m.content=content;})();";
         view.evaluateJavascript(script, null);
+    }
+
+    private void updateZoomBadge() {
+        int percent = selectedZoomPercent();
+        versionBadge.setText(getVersionLabel() + "  " + percent + "%");
+        versionBadge.setContentDescription("Version " + getVersionLabel() +
+                ". Zoom " + percent + " percent. Select zoom.");
+    }
+
+    private void showZoomMenu() {
+        if (!useTvZoomControl() || zoomMenuOpen) {
+            return;
+        }
+        stopCursorAnimation();
+        if (cursorView != null) {
+            cursorView.setVisibility(View.GONE);
+        }
+        PopupMenu menu = new PopupMenu(this, versionBadge, android.view.Gravity.END);
+        int selected = selectedZoomPercent();
+        for (int option : ZOOM_OPTIONS) {
+            menu.getMenu().add(0, option, option, option + "%")
+                    .setCheckable(true).setChecked(option == selected);
+        }
+        menu.getMenu().setGroupCheckable(0, true, true);
+        menu.setOnMenuItemClickListener(item -> {
+            preferences.edit().putInt(KEY_ZOOM_PERCENT, item.getItemId()).apply();
+            updateZoomBadge();
+            injectSelectedZoom(webView);
+            return true;
+        });
+        menu.setOnDismissListener(ignored -> {
+            zoomMenuOpen = false;
+            zoomMenu = null;
+            enableImmersiveMode();
+        });
+        zoomMenu = menu;
+        zoomMenuOpen = true;
+        menu.show();
     }
 
     @Override
@@ -717,7 +779,7 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
-            configureViewportForUrl(view, url);
+            configureWebViewScale(view);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
                 showLoadingSpinner();
                 return;
@@ -733,7 +795,7 @@ public final class MainActivity extends Activity {
         public void onPageCommitVisible(WebView view, String url) {
             super.onPageCommitVisible(view, url);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
-                injectTvDesktopViewport(view, url);
+                injectSelectedZoom(view);
                 injectNavigationStyling(view);
             }
         }
@@ -745,7 +807,7 @@ public final class MainActivity extends Activity {
                 return;
             }
             lastAllowedUrl = url;
-            injectTvDesktopViewport(view, url);
+            injectSelectedZoom(view);
             hideLoadingSpinner();
             injectCosmeticFiltering(view);
             injectNavigationStyling(view);
@@ -944,7 +1006,6 @@ public final class MainActivity extends Activity {
                     preferences.edit().putString(KEY_HOME_URL, normalized).apply();
                     lastAllowedUrl = normalized;
                     dialog.dismiss();
-                    configureViewportForUrl(webView, normalized);
                     webView.loadUrl(normalized);
                 }));
         dialog.setOnDismissListener(ignored -> {
@@ -1026,7 +1087,7 @@ public final class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (urlDialogVisible || customView != null) {
+        if (urlDialogVisible || zoomMenuOpen || customView != null) {
             return super.dispatchKeyEvent(event);
         }
 
@@ -1222,6 +1283,9 @@ public final class MainActivity extends Activity {
         if (webView.getWidth() == 0 || webView.getHeight() == 0) {
             return;
         }
+        if (cursorOverZoomBadge()) {
+            return;
+        }
         long now = SystemClock.uptimeMillis();
         MotionEvent hover = MotionEvent.obtain(
                 now, now, MotionEvent.ACTION_HOVER_MOVE, cursorX, cursorY, 0);
@@ -1243,6 +1307,10 @@ public final class MainActivity extends Activity {
     }
 
     private void clickAtCursor() {
+        if (cursorOverZoomBadge()) {
+            versionBadge.performClick();
+            return;
+        }
         long downTime = SystemClock.uptimeMillis();
         MotionEvent down = MotionEvent.obtain(
                 downTime, downTime, MotionEvent.ACTION_DOWN, cursorX, cursorY, 0);
@@ -1259,6 +1327,14 @@ public final class MainActivity extends Activity {
         scheduleCursorHide();
     }
 
+    private boolean cursorOverZoomBadge() {
+        if (!useTvZoomControl() || versionBadge == null || !versionBadge.isShown()) {
+            return false;
+        }
+        return cursorX >= versionBadge.getLeft() && cursorX < versionBadge.getRight()
+                && cursorY >= versionBadge.getTop() && cursorY < versionBadge.getBottom();
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -1271,7 +1347,9 @@ public final class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (customView != null) {
+        if (zoomMenuOpen && zoomMenu != null) {
+            zoomMenu.dismiss();
+        } else if (customView != null) {
             hideCustomView();
         } else if (webView.canGoBack()) {
             webView.goBack();
@@ -1319,6 +1397,9 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         stopCursorAnimation();
+        if (zoomMenu != null) {
+            zoomMenu.dismiss();
+        }
         if (updateReceiverRegistered) {
             unregisterReceiver(updateDownloadReceiver);
             updateReceiverRegistered = false;

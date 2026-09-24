@@ -17,7 +17,7 @@ The app shows the configured website in an immersive, edge-to-edge WebView.
 - First-party cookies and DOM storage for sign-in sessions
 - File upload support
 - Full-screen web media support
-- Initial page scale is 90% on most sites; user zoom controls and gestures are disabled
+- Initial page scale is 90% in Skynet; Cable on TV has a saved 50%-110% zoom menu
 - Android TV launcher support and D-pad/remote navigation inside web content
 - Kiosk-style fullscreen display with no app header, footer, or navigation controls
 - Screen remains awake while Skynet is in the foreground
@@ -57,8 +57,9 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 The Cable product flavor is a separate Android TV app with the same simple native
 matte-black arrow pointer. D-pad arrows move it, Enter activates the element below
 it, and the loaded website keeps its original styling.
-On TV, Cable gives pantyflix.com a 1200 CSS-pixel layout viewport so its desktop
-navigation appears instead of the floating mobile menu. Other sites are unchanged.
+On TV, select the small version badge in the upper-right corner to choose 50%,
+60%, 70%, 80%, 90%, 100%, or 110% zoom. The choice persists across launches and
+adjusts the layout viewport as well as the visible scale on each page.
 
 ```sh
 ./gradlew assembleCableRelease
