@@ -20,13 +20,17 @@ android {
         skynet {
             dimension "navigation"
             buildConfigField "boolean", "POINTER_ENABLED", "true"
+            buildConfigField "String", "UPDATE_TAG_PREFIX", "\"v\""
+            buildConfigField "String", "UPDATE_ASSET_NAME", "\"Skynet.apk\""
         }
         cable {
             dimension "navigation"
             applicationId "com.pepea.cable"
-            versionCode 2
-            versionName "1.1.0"
-            buildConfigField "boolean", "POINTER_ENABLED", "false"
+            versionCode 3
+            versionName "1.2.0"
+            buildConfigField "boolean", "POINTER_ENABLED", "true"
+            buildConfigField "String", "UPDATE_TAG_PREFIX", "\"cable-v\""
+            buildConfigField "String", "UPDATE_ASSET_NAME", "\"Cable.apk\""
         }
     }
 

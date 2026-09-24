@@ -17,13 +17,14 @@ The app shows the configured website in an immersive, edge-to-edge WebView.
 - First-party cookies and DOM storage for sign-in sessions
 - File upload support
 - Full-screen web media support
+- Page scale fixed at 90%; user zoom controls and gestures are disabled
 - Android TV launcher support and D-pad/remote navigation inside web content
 - Kiosk-style fullscreen display with no app header, footer, or navigation controls
 - Screen remains awake while Skynet is in the foreground
 - Tiny semi-transparent app-version badge in the upper-right corner
-- Native cool-white Soft UI pointer: D-pad moves, OK clicks, held arrows accelerate
-- Cursor and webpage hover treatment hide after five idle seconds and return on remote input
-- Automatic edge scrolling plus injected hover and focus styling for web controls
+- Native matte-black arrow pointer: D-pad moves, OK clicks, held arrows accelerate
+- Cursor hides after five idle seconds and returns on remote input
+- Automatic edge scrolling without injecting hover or focus CSS into websites
 - Remote Back navigates WebView history and never exits the app at the home page
 - Frame-timed cursor animation with continuous acceleration and smooth edge scrolling
 - Top-level navigation locked to the configured HTTPS origin; cross-origin video frames remain allowed
@@ -48,13 +49,9 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Cable edition
 
-The Cable product flavor is a separate Android TV app with no on-screen pointer.
-Its D-pad navigation selects the nearest visible, compatible web control in the
-pressed direction (preferring controls directly above, below, left, or right of
-the current selection); Enter activates the selected control. If no compatible
-control is visible in that direction, the page scrolls. The geometry is collected
-only after an arrow press and kept in a brief cache for held arrows, so it adds no
-continuous page monitoring or video-rendering work.
+The Cable product flavor is a separate Android TV app with the same simple native
+matte-black arrow pointer. D-pad arrows move it, Enter activates the element below
+it, and the loaded website keeps its original styling.
 
 ```sh
 ./gradlew assembleCableRelease

@@ -2,18 +2,27 @@ package com.pepea.siteview;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
 import android.annotation.SuppressLint;
 import android.app.UiModeManager;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.content.res.ColorStateList;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.view.Choreographer;
 import android.view.InputDevice;
 import android.view.KeyEvent;
@@ -37,6 +46,19 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 @SuppressWarnings("deprecation")
 public final class MainActivity extends Activity {
     private static final long CURSOR_IDLE_TIMEOUT_MS = 5_000L;
@@ -45,7 +67,14 @@ public final class MainActivity extends Activity {
     private static final String KEY_SITE_SETUP_SCHEMA = "site_setup_schema";
     private static final int SITE_SETUP_SCHEMA = 1;
     private static final String KEY_AD_BLOCKING = "ad_blocking";
+    private static final String KEY_UPDATE_LAST_CHECK = "update_last_check";
+    private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
+    private static final String KEY_UPDATE_VERSION = "update_version";
     private static final int FILE_CHOOSER_REQUEST = 41;
+    private static final int LOCKED_PAGE_SCALE_PERCENT = 90;
+    private static final long UPDATE_CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L;
+    private static final String GITHUB_RELEASES_URL =
+            "https://api.github.com/repos/okonnu/skynet-android-tv/releases?per_page=20";
     private static final boolean POINTER_ENABLED = BuildConfig.POINTER_ENABLED;
     /*
      * Cable uses this only after a D-pad press.  It deliberately has no mutation
@@ -199,6 +228,7 @@ public final class MainActivity extends Activity {
     private boolean adBlockingEnabled;
     private WebView webView;
     private AdBlocker adBlocker;
+    private DownloadManager downloadManager;
     private ValueCallback<Uri[]> fileCallback;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
@@ -220,7 +250,24 @@ public final class MainActivity extends Activity {
     private long cursorMovementStartedNanos;
     private long previousHoverDispatchNanos;
     private String lastAllowedUrl;
+    private boolean updateCheckInFlight;
+    private boolean updateReceiverRegistered;
+    private boolean updateInstallPermissionLaunched;
     private final Choreographer choreographer = Choreographer.getInstance();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService updateExecutor = Executors.newSingleThreadExecutor();
+    private final BroadcastReceiver updateDownloadReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) {
+                return;
+            }
+            long completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+            if (completedId == preferences.getLong(KEY_UPDATE_DOWNLOAD_ID, -1L)) {
+                installCompletedUpdateIfReady();
+            }
+        }
+    };
     private final Runnable hideCursor = () -> {
         if (cursorView != null && cursorView.getVisibility() == View.VISIBLE) {
             dispatchHoverExit();
@@ -234,6 +281,8 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        downloadManager = getSystemService(DownloadManager.class);
+        registerUpdateDownloadReceiver();
         adBlockingEnabled = preferences.getBoolean(KEY_AD_BLOCKING, true);
         boolean resetSavedSite = preferences.getInt(KEY_SITE_SETUP_SCHEMA, 0) < SITE_SETUP_SCHEMA;
         if (resetSavedSite) {
@@ -322,6 +371,8 @@ public final class MainActivity extends Activity {
             } else {
                 webView.requestFocus();
             }
+            installCompletedUpdateIfReady();
+            maybeCheckForUpdate();
         });
     }
 
@@ -347,9 +398,10 @@ public final class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setSupportMultipleWindows(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
-        settings.setBuiltInZoomControls(true);
+        settings.setSupportZoom(false);
+        settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setLoadWithOverviewMode(true);
+        settings.setLoadWithOverviewMode(false);
         settings.setUseWideViewPort(true);
         settings.setSafeBrowsingEnabled(true);
 
@@ -359,6 +411,260 @@ public final class MainActivity extends Activity {
 
         webView.setWebViewClient(new SiteViewClient());
         webView.setWebChromeClient(new SiteChromeClient());
+        webView.setInitialScale(LOCKED_PAGE_SCALE_PERCENT);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        installCompletedUpdateIfReady();
+        maybeCheckForUpdate();
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private void registerUpdateDownloadReceiver() {
+        IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(updateDownloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(updateDownloadReceiver, filter);
+        }
+        updateReceiverRegistered = true;
+    }
+
+    private void maybeCheckForUpdate() {
+        if (downloadManager == null || updateCheckInFlight
+                || preferences.getLong(KEY_UPDATE_DOWNLOAD_ID, -1L) != -1L) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long lastCheck = preferences.getLong(KEY_UPDATE_LAST_CHECK, 0L);
+        if (now - lastCheck < UPDATE_CHECK_INTERVAL_MS) {
+            return;
+        }
+
+        updateCheckInFlight = true;
+        updateExecutor.execute(() -> {
+            ReleaseUpdate update = findAvailableUpdate();
+            mainHandler.post(() -> {
+                updateCheckInFlight = false;
+                preferences.edit().putLong(KEY_UPDATE_LAST_CHECK, System.currentTimeMillis()).apply();
+                if (update != null && !isFinishing()
+                        && (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1 || !isDestroyed())) {
+                    downloadUpdate(update);
+                }
+            });
+        });
+    }
+
+    private ReleaseUpdate findAvailableUpdate() {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(GITHUB_RELEASES_URL).openConnection();
+            connection.setConnectTimeout(10_000);
+            connection.setReadTimeout(15_000);
+            connection.setRequestMethod("GET");
+            connection.setRequestProperty("Accept", "application/vnd.github+json");
+            connection.setRequestProperty("User-Agent", getPackageName());
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                return null;
+            }
+
+            String response = readResponse(connection.getInputStream());
+            JSONArray releases = new JSONArray(response);
+            String installedVersion = getInstalledVersionName();
+            for (int index = 0; index < releases.length(); index++) {
+                JSONObject release = releases.optJSONObject(index);
+                if (release == null || release.optBoolean("draft") || release.optBoolean("prerelease")) {
+                    continue;
+                }
+                String tag = release.optString("tag_name", "");
+                if (!tag.startsWith(BuildConfig.UPDATE_TAG_PREFIX)) {
+                    continue;
+                }
+                String version = tag.substring(BuildConfig.UPDATE_TAG_PREFIX.length());
+                if (!isVersionNewer(version, installedVersion)) {
+                    continue;
+                }
+                JSONArray assets = release.optJSONArray("assets");
+                if (assets == null) {
+                    continue;
+                }
+                for (int assetIndex = 0; assetIndex < assets.length(); assetIndex++) {
+                    JSONObject asset = assets.optJSONObject(assetIndex);
+                    if (asset == null || !BuildConfig.UPDATE_ASSET_NAME.equals(asset.optString("name", ""))) {
+                        continue;
+                    }
+                    String downloadUrl = asset.optString("browser_download_url", "");
+                    if (downloadUrl.startsWith("https://github.com/okonnu/skynet-android-tv/")) {
+                        return new ReleaseUpdate(version, downloadUrl);
+                    }
+                }
+            }
+        } catch (java.io.IOException | JSONException ignored) {
+            // A later foreground check will retry; update checks never affect web loading.
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+        return null;
+    }
+
+    private static String readResponse(InputStream inputStream) throws java.io.IOException {
+        StringBuilder response = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream,
+                StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+        }
+        return response.toString();
+    }
+
+    private void downloadUpdate(ReleaseUpdate update) {
+        if (downloadManager == null || preferences.getLong(KEY_UPDATE_DOWNLOAD_ID, -1L) != -1L) {
+            return;
+        }
+        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(update.downloadUrl));
+        request.setTitle(getString(R.string.app_name) + " update");
+        request.setDescription("Version " + update.version);
+        request.setMimeType("application/vnd.android.package-archive");
+        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+        try {
+            long downloadId = downloadManager.enqueue(request);
+            preferences.edit()
+                    .putLong(KEY_UPDATE_DOWNLOAD_ID, downloadId)
+                    .putString(KEY_UPDATE_VERSION, update.version)
+                    .apply();
+            Toast.makeText(this, "Downloading " + getString(R.string.app_name) + " update…",
+                    Toast.LENGTH_SHORT).show();
+        } catch (RuntimeException exception) {
+            Toast.makeText(this, "Unable to download the update", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void installCompletedUpdateIfReady() {
+        if (downloadManager == null) {
+            return;
+        }
+        long downloadId = preferences.getLong(KEY_UPDATE_DOWNLOAD_ID, -1L);
+        if (downloadId == -1L) {
+            return;
+        }
+        String downloadedVersion = preferences.getString(KEY_UPDATE_VERSION, "");
+        if (!isVersionNewer(downloadedVersion, getInstalledVersionName())) {
+            clearPendingUpdate();
+            return;
+        }
+
+        DownloadManager.Query query = new DownloadManager.Query().setFilterById(downloadId);
+        Cursor cursor = null;
+        try {
+            cursor = downloadManager.query(query);
+            if (cursor == null || !cursor.moveToFirst()) {
+                return;
+            }
+            int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+            if (status == DownloadManager.STATUS_FAILED) {
+                clearPendingUpdate();
+                return;
+            }
+            if (status != DownloadManager.STATUS_SUCCESSFUL) {
+                return;
+            }
+        } catch (RuntimeException ignored) {
+            return;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+
+        Uri updateUri = downloadManager.getUriForDownloadedFile(downloadId);
+        if (updateUri == null) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && !getPackageManager().canRequestPackageInstalls()) {
+            if (!updateInstallPermissionLaunched) {
+                updateInstallPermissionLaunched = true;
+                Intent settingsIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName()));
+                try {
+                    startActivity(settingsIntent);
+                    Toast.makeText(this, "Allow installs from this app to finish the update",
+                            Toast.LENGTH_LONG).show();
+                } catch (ActivityNotFoundException ignored) {
+                    Toast.makeText(this, "Allow installs from this app to finish the update",
+                            Toast.LENGTH_LONG).show();
+                }
+            }
+            return;
+        }
+
+        Intent installIntent = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(updateUri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(installIntent);
+        } catch (ActivityNotFoundException ignored) {
+            Toast.makeText(this, "No package installer is available", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void clearPendingUpdate() {
+        preferences.edit()
+                .remove(KEY_UPDATE_DOWNLOAD_ID)
+                .remove(KEY_UPDATE_VERSION)
+                .apply();
+    }
+
+    private String getInstalledVersionName() {
+        try {
+            String versionName = getPackageManager()
+                    .getPackageInfo(getPackageName(), 0).versionName;
+            return versionName == null ? "" : versionName;
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+            return "";
+        }
+    }
+
+    private static boolean isVersionNewer(String candidate, String installed) {
+        String[] candidateParts = candidate.split("\\.");
+        String[] installedParts = installed.split("\\.");
+        int length = Math.max(candidateParts.length, installedParts.length);
+        for (int index = 0; index < length; index++) {
+            int candidatePart = versionPart(candidateParts, index);
+            int installedPart = versionPart(installedParts, index);
+            if (candidatePart != installedPart) {
+                return candidatePart > installedPart;
+            }
+        }
+        return false;
+    }
+
+    private static int versionPart(String[] parts, int index) {
+        if (index >= parts.length) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(parts[index].replaceAll("[^0-9]", ""));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    private static final class ReleaseUpdate {
+        final String version;
+        final String downloadUrl;
+
+        ReleaseUpdate(String version, String downloadUrl) {
+            this.version = version;
+            this.downloadUrl = downloadUrl;
+        }
     }
 
     private final class SiteViewClient extends WebViewClient {
@@ -378,6 +684,7 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
+            view.setInitialScale(LOCKED_PAGE_SCALE_PERCENT);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
                 showLoadingSpinner();
                 return;
@@ -559,16 +866,8 @@ public final class MainActivity extends Activity {
     }
 
     private void injectNavigationStyling(WebView view) {
-        if (POINTER_ENABLED) {
-            injectCursorStyling(view);
-        } else {
-            injectFocusStyling(view);
-            injectSpatialNavigation(view);
-        }
-    }
-
-    private void injectSpatialNavigation(WebView view) {
-        view.evaluateJavascript(SPATIAL_NAVIGATION_INSTALLER, null);
+        // The native arrow is intentionally the only navigation treatment.
+        // Do not inject page CSS: websites retain their own hover and focus styles.
     }
 
     private void showUrlDialog(boolean cancelable) {
@@ -920,7 +1219,6 @@ public final class MainActivity extends Activity {
         up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
         webView.dispatchTouchEvent(up);
         up.recycle();
-        cursorView.pulse();
         dispatchHoverEvent();
         scheduleCursorHide();
     }
@@ -985,6 +1283,12 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         stopCursorAnimation();
+        if (updateReceiverRegistered) {
+            unregisterReceiver(updateDownloadReceiver);
+            updateReceiverRegistered = false;
+        }
+        updateExecutor.shutdownNow();
+        mainHandler.removeCallbacksAndMessages(null);
         if (cursorView != null) {
             cursorView.removeCallbacks(hideCursor);
         }
