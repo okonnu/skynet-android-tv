@@ -1,0 +1,51 @@
+name: Keep Cable download URL current
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-cable-download:
+    if: >-
+      (github.event_name == 'release' &&
+       startsWith(github.event.release.tag_name, 'cable-v') &&
+       !github.event.release.prerelease) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cable-current-download
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Download the versioned Cable APK
+        run: |
+          RELEASE_TAG=$(gh release list --repo "$REPOSITORY" --limit 100 \
+            --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease == false and (.tagName | startswith("cable-v"))) | .tagName' \
+            | sort -V | tail -n 1)
+          test -n "$RELEASE_TAG"
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          mkdir -p dist
+          gh release download "$RELEASE_TAG" --repo "$REPOSITORY" --pattern Cable.apk --dir dist
+          test -s dist/Cable.apk
+
+      - name: Update the permanent download
+        run: |
+          if gh release view cable-current --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release upload cable-current dist/Cable.apk --repo "$REPOSITORY" --clobber
+            gh release edit cable-current --repo "$REPOSITORY" \
+              --title "Cable current download" \
+              --notes "Current Cable APK: $RELEASE_TAG. For version history, see the numbered Cable releases."
+          else
+            gh release create cable-current dist/Cable.apk --repo "$REPOSITORY" \
+              --target "${{ github.event.repository.default_branch || github.event.release.target_commitish }}" \
+              --title "Cable current download" \
+              --notes "Current Cable APK: $RELEASE_TAG. For version history, see the numbered Cable releases." \
+              --prerelease
+          fi

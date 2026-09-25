@@ -69,3 +69,11 @@ replaces its viewport metadata. It observes only that metadata, not the page bod
 
 The Cable release APK is written to
 `app/build/outputs/apk/cable/release/app-cable-release.apk`.
+
+The permanent Cable download is
+`https://github.com/okonnu/skynet-android-tv/releases/download/cable-current/Cable.apk`.
+The `cable-current` prerelease keeps this URL stable without replacing numbered
+release assets or changing which version the app's auto-updater considers latest.
+When a numbered `cable-v*` release is published with a `Cable.apk` asset, the
+GitHub workflow copies that APK to the permanent download automatically. A
+short link should point to this permanent URL, not to a numbered release.
