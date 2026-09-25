@@ -63,6 +63,10 @@ adjusts the layout viewport as well as the visible scale on each page. Cable
 reapplies it after page loads and in-page navigation, including when a site
 replaces its viewport metadata. It observes only that metadata, not the page body.
 Cable also reapplies the saved zoom once after each remote click on the website.
+The saved zoom must also be passed to WebView's native `setInitialScale()` before
+each page load. Using `0` there lets WebView return to 100% even when the badge
+and injected viewport metadata still say 60%. This was reproduced on
+pantyflix.com in Waydroid and checked with a cold launch and page navigation.
 
 ```sh
 ./gradlew assembleCableRelease

@@ -446,7 +446,9 @@ public final class MainActivity extends Activity {
 
     private void configureWebViewScale(WebView view) {
         view.getSettings().setLoadWithOverviewMode(useTvZoomControl());
-        view.setInitialScale(useTvZoomControl() ? 0 : DEFAULT_PAGE_SCALE_PERCENT);
+        // Do not use 0 for Cable: WebView can reset to 100% on navigation even
+        // while the injected viewport meta still says 60%.
+        view.setInitialScale(useTvZoomControl() ? selectedZoomPercent() : DEFAULT_PAGE_SCALE_PERCENT);
     }
 
     private void injectSelectedZoom(WebView view) {
