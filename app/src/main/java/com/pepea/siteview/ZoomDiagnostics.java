@@ -122,6 +122,14 @@ final class ZoomDiagnostics {
         event.put("webViewScale", view == null ? JSONObject.NULL : view.getScale());
         event.put("webViewWidth", view == null ? JSONObject.NULL : view.getWidth());
         event.put("webViewHeight", view == null ? JSONObject.NULL : view.getHeight());
+        event.put("surfaceScaleX", view == null ? JSONObject.NULL : view.getScaleX());
+        event.put("surfaceScaleY", view == null ? JSONObject.NULL : view.getScaleY());
+        event.put("displayWidth", view == null ? JSONObject.NULL : view.getWidth() * view.getScaleX());
+        event.put("displayHeight", view == null ? JSONObject.NULL : view.getHeight() * view.getScaleY());
+        event.put("parentWidth", view == null || view.getParent() == null ? JSONObject.NULL
+                : ((android.view.View) view.getParent()).getWidth());
+        event.put("parentHeight", view == null || view.getParent() == null ? JSONObject.NULL
+                : ((android.view.View) view.getParent()).getHeight());
         event.put("density", view == null ? JSONObject.NULL : view.getResources().getDisplayMetrics().density);
         event.put("url", view == null ? "" : safeUrl(view.getUrl()));
         event.put("sdk", Build.VERSION.SDK_INT);

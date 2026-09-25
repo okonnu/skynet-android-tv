@@ -58,15 +58,12 @@ The Cable product flavor is a separate Android TV app with the same simple nativ
 matte-black arrow pointer. D-pad arrows move it, Enter activates the element below
 it, and the loaded website keeps its original styling.
 On TV, select the small version badge in the upper-right corner to choose 50%,
-60%, 70%, 80%, 90%, 100%, or 110% zoom. The choice persists across launches and
-adjusts the layout viewport as well as the visible scale on each page. Cable
-reapplies it after page loads and in-page navigation, including when a site
-replaces its viewport metadata. It observes only that metadata, not the page body.
-Cable also reapplies the saved zoom once after each remote click on the website.
-The saved zoom must also be passed to WebView's native `setInitialScale()` before
-each page load. Using `0` there lets WebView return to 100% even when the badge
-and injected viewport metadata still say 60%. This was reproduced on
-pantyflix.com in Waydroid and checked with a cold launch and page navigation.
+60%, 70%, 80%, 90%, 100%, or 110% zoom. The choice persists across launches.
+Cable now keeps the browser's own zoom at 100%, lays out a larger WebView, and
+scales that Android view to the selected size. Websites cannot change the outer
+Android transform. The remote pointer's clicks, hover, and edge scrolling are
+mapped into the larger WebView. Fullscreen video uses a separate unscaled view.
+At low zoom levels the larger surface can use more memory and rendering work.
 
 ```sh
 ./gradlew assembleCableRelease
@@ -92,9 +89,8 @@ while its billing lock is active, so this step is currently part of publishing.
 
 ## Temporary LAN zoom diagnostics
 
-Cable 1.2.7 is an experimental diagnostic build for the TV zoom issue. It turns
-off WebView's automatic fit-to-width on TV and corrects a detected native scale
-drift with a guarded, rate-limited zoom operation. It records
+Cable 1.2.8 is an experimental diagnostic build for the TV zoom issue. It uses
+an outer Android view transform instead of WebView page zoom. It records
 the selected zoom, WebView scale changes, viewport measurements at short delays
 around navigation, and logcat entries visible to its own app process. Android
 does not grant an ordinary app access to the complete device-wide logcat.
@@ -111,7 +107,7 @@ It creates `.diagnostics/token` and appends events to
 `.diagnostics/events.jsonl`. Both are ignored by git. Build the diagnostic APK
 with `CABLE_DIAG_URL=http://192.168.1.224:8765/event` and
 `CABLE_DIAG_TOKEN` set to the contents of `.diagnostics/token`. The IP must be
-updated if this PC's Wi-Fi address changes. The published 1.2.7 APK was built
+updated if this PC's Wi-Fi address changes. The published 1.2.8 APK was built
 with these values. Stop the receiver and remove the temporary firewall rule
 after the TV test, then remove this diagnostic instrumentation in the next
 normal release.
