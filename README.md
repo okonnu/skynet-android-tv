@@ -92,7 +92,9 @@ while its billing lock is active, so this step is currently part of publishing.
 
 ## Temporary LAN zoom diagnostics
 
-Cable 1.2.6 is a diagnostic build for the TV cold-start zoom issue. It records
+Cable 1.2.7 is an experimental diagnostic build for the TV zoom issue. It turns
+off WebView's automatic fit-to-width on TV and corrects a detected native scale
+drift with a guarded, rate-limited zoom operation. It records
 the selected zoom, WebView scale changes, viewport measurements at short delays
 around navigation, and logcat entries visible to its own app process. Android
 does not grant an ordinary app access to the complete device-wide logcat.
@@ -109,7 +111,7 @@ It creates `.diagnostics/token` and appends events to
 `.diagnostics/events.jsonl`. Both are ignored by git. Build the diagnostic APK
 with `CABLE_DIAG_URL=http://192.168.1.224:8765/event` and
 `CABLE_DIAG_TOKEN` set to the contents of `.diagnostics/token`. The IP must be
-updated if this PC's Wi-Fi address changes. The published 1.2.6 APK was built
+updated if this PC's Wi-Fi address changes. The published 1.2.7 APK was built
 with these values. Stop the receiver and remove the temporary firewall rule
 after the TV test, then remove this diagnostic instrumentation in the next
 normal release.

@@ -261,6 +261,9 @@ public final class MainActivity extends Activity {
     private boolean updateInstallPermissionLaunched;
     private final Choreographer choreographer = Choreographer.getInstance();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Runnable pendingZoomCorrection;
+    private long zoomCorrectionWindowStartMs;
+    private int zoomCorrectionsInWindow;
     private final ExecutorService updateExecutor = Executors.newSingleThreadExecutor();
     private final BroadcastReceiver updateDownloadReceiver = new BroadcastReceiver() {
         @Override
@@ -423,8 +426,8 @@ public final class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setSupportMultipleWindows(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
-        settings.setSupportZoom(false);
-        settings.setBuiltInZoomControls(false);
+        settings.setSupportZoom(useTvZoomControl());
+        settings.setBuiltInZoomControls(useTvZoomControl());
         settings.setDisplayZoomControls(false);
         settings.setLoadWithOverviewMode(false);
         settings.setUseWideViewPort(true);
@@ -454,11 +457,49 @@ public final class MainActivity extends Activity {
     }
 
     private void configureWebViewScale(WebView view) {
-        view.getSettings().setLoadWithOverviewMode(useTvZoomControl());
+        // A fixed TV zoom must not compete with WebView's automatic fit-to-width.
+        view.getSettings().setLoadWithOverviewMode(false);
         // Do not use 0 for Cable: WebView can reset to 100% on navigation even
         // while the injected viewport meta still says 60%.
         view.setInitialScale(useTvZoomControl() ? selectedZoomPercent() : DEFAULT_PAGE_SCALE_PERCENT);
         zoomEvent("setInitialScale", view);
+    }
+
+    private void scheduleZoomCorrection(WebView view, String reason) {
+        if (!useTvZoomControl() || view == null || customView != null) {
+            return;
+        }
+        if (pendingZoomCorrection != null) {
+            mainHandler.removeCallbacks(pendingZoomCorrection);
+        }
+        Runnable correction = () -> {
+            pendingZoomCorrection = null;
+            if (webView != view || customView != null || view.getParent() == null) {
+                return;
+            }
+            float currentScale = view.getScale();
+            float targetScale = view.getResources().getDisplayMetrics().density
+                    * selectedZoomPercent() / 100f;
+            if (currentScale <= 0f || Math.abs(currentScale - targetScale) / targetScale < 0.04f) {
+                return;
+            }
+            long now = SystemClock.uptimeMillis();
+            if (now - zoomCorrectionWindowStartMs > 10_000L) {
+                zoomCorrectionWindowStartMs = now;
+                zoomCorrectionsInWindow = 0;
+            }
+            // Avoid a feedback loop if a site repeatedly forces its own scale.
+            if (zoomCorrectionsInWindow >= 2) {
+                zoomEvent("zoomCorrection.rateLimited." + reason, view);
+                return;
+            }
+            zoomCorrectionsInWindow++;
+            zoomEvent("zoomCorrection.before." + reason, view);
+            view.zoomBy(targetScale / currentScale);
+            zoomSnapshot("zoomCorrection.after." + reason, view, 500);
+        };
+        pendingZoomCorrection = correction;
+        mainHandler.postDelayed(correction, 350L);
     }
 
     private void zoomEvent(String phase, WebView view) {
@@ -553,6 +594,7 @@ public final class MainActivity extends Activity {
             zoomEvent("zoomMenu.selected", webView);
             updateZoomBadge();
             injectSelectedZoom(webView);
+            scheduleZoomCorrection(webView, "menuSelection");
             zoomNavigationSamples("zoomMenu.applied", webView);
             return true;
         });
@@ -826,6 +868,7 @@ public final class MainActivity extends Activity {
             super.onScaleChanged(view, oldScale, newScale);
             zoomEvent("onScaleChanged." + oldScale + ".to." + newScale, view);
             zoomSnapshot("onScaleChanged", view, 100);
+            scheduleZoomCorrection(view, "scaleChanged");
         }
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
@@ -1486,6 +1529,10 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (pendingZoomCorrection != null) {
+            mainHandler.removeCallbacks(pendingZoomCorrection);
+            pendingZoomCorrection = null;
+        }
         zoomEvent("onDestroy", webView);
         if (zoomDiagnostics != null) zoomDiagnostics.close();
         stopCursorAnimation();
