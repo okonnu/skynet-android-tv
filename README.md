@@ -59,7 +59,9 @@ matte-black arrow pointer. D-pad arrows move it, Enter activates the element bel
 it, and the loaded website keeps its original styling.
 On TV, select the small version badge in the upper-right corner to choose 50%,
 60%, 70%, 80%, 90%, 100%, or 110% zoom. The choice persists across launches and
-adjusts the layout viewport as well as the visible scale on each page.
+adjusts the layout viewport as well as the visible scale on each page. Cable
+reapplies it after page loads and in-page navigation, including when a site
+replaces its viewport metadata. It observes only that metadata, not the page body.
 
 ```sh
 ./gradlew assembleCableRelease

@@ -455,19 +455,44 @@ public final class MainActivity extends Activity {
         }
         int percent = selectedZoomPercent();
         String scale = Float.toString(percent / 100f);
-        // Viewport metadata accounts for TV density and changes responsive CSS breakpoints.
-        // A one-time update on navigation avoids a page observer or animation loop.
-        String script = "(function(){if(!document.head)return;" +
-                "var m=document.querySelector('meta[name=\"viewport\"]');" +
-                "if(!m){m=document.createElement('meta');m.name='viewport';document.head.appendChild(m);}" +
-                "var original=m.getAttribute('data-cable-original-viewport');" +
-                "if(original===null){original=m.content||'';m.setAttribute('data-cable-original-viewport',original);}" +
-                "var extra=original.split(',').map(function(s){return s.trim();})" +
-                ".filter(function(s){return s&&!/^(width|initial-scale|minimum-scale|maximum-scale)\\s*=/i.test(s);})" +
-                ".join(', ');" +
-                "var width=Math.max(1,Math.round(screen.width*100/" + percent + "));" +
-                "var content='width='+width+', initial-scale=" + scale + "'+(extra?', '+extra:'');" +
-                "if(m.content!==content)m.content=content;})();";
+        // Observe only the viewport meta and head children; never scan the page body.
+        // Single-page sites can replace the viewport meta after WebView page callbacks.
+        String script = String.format(java.util.Locale.US, """
+                (function(){
+                  if(!document.head)return;
+                  var controller=window.__cableTvZoomController;
+                  if(controller){controller.set(%d,%s);return;}
+                  var percent=%d,scale=%s,meta=null,original='';
+                  var headObserver=new MutationObserver(apply);
+                  var metaObserver=new MutationObserver(apply);
+                  headObserver.observe(document.head,{childList:true});
+                  function apply(){
+                    if(!document.head)return;
+                    var next=document.head.querySelector('meta[name="viewport"]');
+                    if(!next){
+                      next=document.createElement('meta');
+                      next.name='viewport';
+                      document.head.appendChild(next);
+                    }
+                    if(next!==meta){
+                      metaObserver.disconnect();
+                      meta=next;
+                      original=meta.content||'';
+                      metaObserver.observe(meta,{attributes:true,attributeFilter:['content']});
+                    }
+                    var extra=original.split(',').map(function(s){return s.trim();})
+                      .filter(function(s){return s&&!/^(width|initial-scale|minimum-scale|maximum-scale)\\s*=/i.test(s);})
+                      .join(', ');
+                    var width=Math.max(1,Math.round(screen.width*100/percent));
+                    var content='width='+width+', initial-scale='+scale+(extra?', '+extra:'');
+                    if(meta.content!==content)meta.content=content;
+                  }
+                  window.__cableTvZoomController={set:function(value,newScale){
+                    percent=value;scale=newScale;apply();
+                  }};
+                  apply();
+                })();
+                """, percent, scale, percent, scale);
         view.evaluateJavascript(script, null);
     }
 
@@ -797,6 +822,14 @@ public final class MainActivity extends Activity {
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
                 injectSelectedZoom(view);
                 injectNavigationStyling(view);
+            }
+        }
+
+        @Override
+        public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+            super.doUpdateVisitedHistory(view, url, isReload);
+            if (isAllowedTopLevelUrl(Uri.parse(url))) {
+                injectSelectedZoom(view);
             }
         }
 
