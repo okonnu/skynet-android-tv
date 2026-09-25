@@ -108,6 +108,8 @@ It creates `.diagnostics/token` and appends events to
 with `CABLE_DIAG_URL=http://192.168.1.224:8765/event` and
 `CABLE_DIAG_TOKEN` set to the contents of `.diagnostics/token`. The IP must be
 updated if this PC's Wi-Fi address changes. The published 1.2.8 APK was built
-with these values. Stop the receiver and remove the temporary firewall rule
+with these values. The receiver currently keeps only 1.2.8 sessions so an
+older TV app cannot refill the cleared logs. Stop the receiver and remove the
+temporary firewall rule
 after the TV test, then remove this diagnostic instrumentation in the next
 normal release.

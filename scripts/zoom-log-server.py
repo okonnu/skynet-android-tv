@@ -16,6 +16,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bind", required=True, help="LAN IPv4 address of this PC")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--required-version", default="1.2.8",
+                        help="Accept only this Cable version and its app-process logcat")
     args = parser.parse_args()
     bind_address = ipaddress.ip_address(args.bind)
     if not bind_address.is_private or bind_address.is_loopback:
@@ -31,6 +33,7 @@ def main():
     token = token_path.read_text(encoding="ascii").strip()
     output_path = data_dir / "events.jsonl"
     lock = threading.Lock()
+    accepted_sessions = set()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -67,12 +70,19 @@ def main():
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                 self.send_error(400)
                 return
-            event["receivedAt"] = datetime.now(timezone.utc).isoformat()
-            event["peer"] = str(peer)
+            session = event.get("session")
+            if not isinstance(session, str) or not session:
+                self.send_error(400)
+                return
             with lock:
-                with output_path.open("a", encoding="utf-8") as output:
-                    output.write(json.dumps(event, separators=(",", ":")) + "\n")
-                os.chmod(output_path, 0o600)
+                if event.get("version") == args.required_version:
+                    accepted_sessions.add(session)
+                if session in accepted_sessions:
+                    event["receivedAt"] = datetime.now(timezone.utc).isoformat()
+                    event["peer"] = str(peer)
+                    with output_path.open("a", encoding="utf-8") as output:
+                        output.write(json.dumps(event, separators=(",", ":")) + "\n")
+                    os.chmod(output_path, 0o600)
             self.send_response(204)
             self.end_headers()
 
