@@ -62,6 +62,7 @@ On TV, select the small version badge in the upper-right corner to choose 50%,
 adjusts the layout viewport as well as the visible scale on each page. Cable
 reapplies it after page loads and in-page navigation, including when a site
 replaces its viewport metadata. It observes only that metadata, not the page body.
+Cable also reapplies the saved zoom once after each remote click on the website.
 
 ```sh
 ./gradlew assembleCableRelease

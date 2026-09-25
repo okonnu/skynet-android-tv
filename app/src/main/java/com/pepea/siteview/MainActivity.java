@@ -1356,6 +1356,10 @@ public final class MainActivity extends Activity {
         up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
         webView.dispatchTouchEvent(up);
         up.recycle();
+        // Reapply the saved TV zoom after the website handles each remote click.
+        if (useTvZoomControl()) {
+            webView.postOnAnimation(() -> injectSelectedZoom(webView));
+        }
         dispatchHoverEvent();
         scheduleCursorHide();
     }
