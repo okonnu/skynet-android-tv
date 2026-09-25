@@ -89,3 +89,27 @@ After publishing a numbered `cable-v*` release with a `Cable.apk` asset, run
 the permanent download. A short link should point to this permanent URL, not
 to a numbered release. GitHub Actions cannot run unattended on this account
 while its billing lock is active, so this step is currently part of publishing.
+
+## Temporary LAN zoom diagnostics
+
+Cable 1.2.6 is a diagnostic build for the TV cold-start zoom issue. It records
+the selected zoom, WebView scale changes, viewport measurements at short delays
+around navigation, and logcat entries visible to its own app process. Android
+does not grant an ordinary app access to the complete device-wide logcat.
+The diagnostic sender is disabled in ordinary builds unless both environment
+variables below are supplied at build time. Skynet does not include it.
+
+Start the receiver on this PC's current private Wi-Fi IP:
+
+```sh
+python3 scripts/zoom-log-server.py --bind 192.168.1.224 --port 8765
+```
+
+It creates `.diagnostics/token` and appends events to
+`.diagnostics/events.jsonl`. Both are ignored by git. Build the diagnostic APK
+with `CABLE_DIAG_URL=http://192.168.1.224:8765/event` and
+`CABLE_DIAG_TOKEN` set to the contents of `.diagnostics/token`. The IP must be
+updated if this PC's Wi-Fi address changes. The published 1.2.6 APK was built
+with these values. Stop the receiver and remove the temporary firewall rule
+after the TV test, then remove this diagnostic instrumentation in the next
+normal release.

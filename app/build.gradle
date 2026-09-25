@@ -2,6 +2,9 @@ plugins {
     id "com.android.application"
 }
 
+def diagnosticUrl = System.getenv("CABLE_DIAG_URL") ?: ""
+def diagnosticToken = System.getenv("CABLE_DIAG_TOKEN") ?: ""
+
 android {
     namespace "com.pepea.siteview"
     compileSdk 35
@@ -19,6 +22,8 @@ android {
     productFlavors {
         skynet {
             dimension "navigation"
+            buildConfigField "String", "DIAG_URL", '""'
+            buildConfigField "String", "DIAG_TOKEN", '""'
             buildConfigField "boolean", "POINTER_ENABLED", "true"
             buildConfigField "String", "UPDATE_TAG_PREFIX", "\"v\""
             buildConfigField "String", "UPDATE_ASSET_NAME", "\"Skynet.apk\""
@@ -26,11 +31,13 @@ android {
         cable {
             dimension "navigation"
             applicationId "com.pepea.cable"
-            versionCode 8
-            versionName "1.2.5"
+            versionCode 9
+            versionName "1.2.6"
             buildConfigField "boolean", "POINTER_ENABLED", "true"
             buildConfigField "String", "UPDATE_TAG_PREFIX", "\"cable-v\""
             buildConfigField "String", "UPDATE_ASSET_NAME", "\"Cable.apk\""
+            buildConfigField "String", "DIAG_URL", "\"${diagnosticUrl}\""
+            buildConfigField "String", "DIAG_TOKEN", "\"${diagnosticToken}\""
         }
     }
 

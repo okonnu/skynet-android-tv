@@ -230,6 +230,7 @@ public final class MainActivity extends Activity {
     private SharedPreferences preferences;
     private boolean adBlockingEnabled;
     private WebView webView;
+    private ZoomDiagnostics zoomDiagnostics;
     private AdBlocker adBlocker;
     private DownloadManager downloadManager;
     private ValueCallback<Uri[]> fileCallback;
@@ -286,6 +287,11 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if ("cable".equals(BuildConfig.FLAVOR)) {
+            zoomDiagnostics = new ZoomDiagnostics(BuildConfig.DIAG_URL, BuildConfig.DIAG_TOKEN);
+            zoomDiagnostics.startLogcat();
+            zoomDiagnostics.event("onCreate.preferences", null, selectedZoomPercent());
+        }
         downloadManager = getSystemService(DownloadManager.class);
         registerUpdateDownloadReceiver();
         adBlockingEnabled = preferences.getBoolean(KEY_AD_BLOCKING, true);
@@ -305,6 +311,9 @@ public final class MainActivity extends Activity {
         buildInterface();
         enableImmersiveMode();
         configureWebView();
+        zoomEvent("onCreate.webViewReady", webView);
+        zoomSnapshot("onCreate.webViewReady", webView, 0);
+        zoomSnapshot("onCreate.webViewReady", webView, 2000);
 
         String homeUrl = preferences.getString(KEY_HOME_URL, "");
         if (homeUrl == null || homeUrl.isEmpty()) {
@@ -449,6 +458,23 @@ public final class MainActivity extends Activity {
         // Do not use 0 for Cable: WebView can reset to 100% on navigation even
         // while the injected viewport meta still says 60%.
         view.setInitialScale(useTvZoomControl() ? selectedZoomPercent() : DEFAULT_PAGE_SCALE_PERCENT);
+        zoomEvent("setInitialScale", view);
+    }
+
+    private void zoomEvent(String phase, WebView view) {
+        if (zoomDiagnostics != null) zoomDiagnostics.event(phase, view, selectedZoomPercent());
+    }
+
+    private void zoomSnapshot(String phase, WebView view, long delayMs) {
+        if (zoomDiagnostics != null) zoomDiagnostics.snapshot(phase, view, selectedZoomPercent(), delayMs);
+    }
+
+    private void zoomNavigationSamples(String phase, WebView view) {
+        zoomEvent(phase, view);
+        zoomSnapshot(phase, view, 0);
+        zoomSnapshot(phase, view, 250);
+        zoomSnapshot(phase, view, 1500);
+        zoomSnapshot(phase, view, 5000);
     }
 
     private void injectSelectedZoom(WebView view) {
@@ -496,6 +522,8 @@ public final class MainActivity extends Activity {
                 })();
                 """, percent, scale, percent, scale);
         view.evaluateJavascript(script, null);
+        zoomEvent("injectSelectedZoom", view);
+        zoomSnapshot("injectSelectedZoom", view, 100);
     }
 
     private void updateZoomBadge() {
@@ -522,8 +550,10 @@ public final class MainActivity extends Activity {
         menu.getMenu().setGroupCheckable(0, true, true);
         menu.setOnMenuItemClickListener(item -> {
             preferences.edit().putInt(KEY_ZOOM_PERCENT, item.getItemId()).apply();
+            zoomEvent("zoomMenu.selected", webView);
             updateZoomBadge();
             injectSelectedZoom(webView);
+            zoomNavigationSamples("zoomMenu.applied", webView);
             return true;
         });
         menu.setOnDismissListener(ignored -> {
@@ -539,6 +569,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        zoomNavigationSamples("onResume", webView);
         installCompletedUpdateIfReady();
         maybeCheckForUpdate();
     }
@@ -791,6 +822,12 @@ public final class MainActivity extends Activity {
 
     private final class SiteViewClient extends WebViewClient {
         @Override
+        public void onScaleChanged(WebView view, float oldScale, float newScale) {
+            super.onScaleChanged(view, oldScale, newScale);
+            zoomEvent("onScaleChanged." + oldScale + ".to." + newScale, view);
+            zoomSnapshot("onScaleChanged", view, 100);
+        }
+        @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             return adBlocker.intercept(request, adBlockingEnabled);
         }
@@ -806,6 +843,7 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
+            zoomNavigationSamples("onPageStarted.beforeScale", view);
             configureWebViewScale(view);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
                 showLoadingSpinner();
@@ -821,6 +859,7 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageCommitVisible(WebView view, String url) {
             super.onPageCommitVisible(view, url);
+            zoomNavigationSamples("onPageCommitVisible", view);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
                 injectSelectedZoom(view);
                 injectNavigationStyling(view);
@@ -830,6 +869,7 @@ public final class MainActivity extends Activity {
         @Override
         public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
             super.doUpdateVisitedHistory(view, url, isReload);
+            zoomNavigationSamples("doUpdateVisitedHistory.reload=" + isReload, view);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
                 injectSelectedZoom(view);
             }
@@ -838,6 +878,7 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
+            zoomNavigationSamples("onPageFinished", view);
             if (!isAllowedTopLevelUrl(Uri.parse(url))) {
                 return;
             }
@@ -856,6 +897,7 @@ public final class MainActivity extends Activity {
         @Override
         public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
             super.onReceivedError(view, request, error);
+            zoomEvent("onReceivedError." + error.getErrorCode(), view);
             if (request.isForMainFrame()) {
                 hideLoadingSpinner();
                 Toast.makeText(MainActivity.this, "Unable to load the website", Toast.LENGTH_LONG).show();
@@ -865,9 +907,15 @@ public final class MainActivity extends Activity {
     }
 
     private final class SiteChromeClient extends WebChromeClient {
+        private int lastProgressBucket = -1;
         @Override
         public void onProgressChanged(WebView view, int newProgress) {
             super.onProgressChanged(view, newProgress);
+            int bucket = newProgress / 25;
+            if (bucket != lastProgressBucket) {
+                lastProgressBucket = bucket;
+                zoomEvent("progress." + newProgress, view);
+            }
             if (newProgress >= 100) {
                 hideLoadingSpinner();
             } else if (isAllowedTopLevelUrl(Uri.parse(view.getUrl() == null ? "" : view.getUrl()))) {
@@ -1342,6 +1390,7 @@ public final class MainActivity extends Activity {
     }
 
     private void clickAtCursor() {
+        zoomEvent("remoteClick", webView);
         if (cursorOverZoomBadge()) {
             versionBadge.performClick();
             return;
@@ -1361,6 +1410,7 @@ public final class MainActivity extends Activity {
         // Reapply the saved TV zoom after the website handles each remote click.
         if (useTvZoomControl()) {
             webView.postOnAnimation(() -> injectSelectedZoom(webView));
+            zoomSnapshot("remoteClick", webView, 800);
         }
         dispatchHoverEvent();
         scheduleCursorHide();
@@ -1407,6 +1457,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        zoomEvent("onPause", webView);
         stopCursorAnimation();
         super.onPause();
     }
@@ -1435,6 +1486,8 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        zoomEvent("onDestroy", webView);
+        if (zoomDiagnostics != null) zoomDiagnostics.close();
         stopCursorAnimation();
         if (zoomMenu != null) {
             zoomMenu.dismiss();
