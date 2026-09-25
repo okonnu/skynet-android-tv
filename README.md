@@ -72,8 +72,15 @@ The Cable release APK is written to
 
 The permanent Cable download is
 `https://github.com/okonnu/skynet-android-tv/releases/download/cable-current/Cable.apk`.
+The TV-friendly link is `https://tinyurl.com/cable4tv` and points to that
+permanent download. The earlier `https://tinyurl.com/22vgmkyf` still points to
+Cable 1.2.2 and cannot be retargeted without access to its owning TinyURL
+account and a paid TinyURL plan.
+
 The `cable-current` prerelease keeps this URL stable without replacing numbered
 release assets or changing which version the app's auto-updater considers latest.
-When a numbered `cable-v*` release is published with a `Cable.apk` asset, the
-GitHub workflow copies that APK to the permanent download automatically. A
-short link should point to this permanent URL, not to a numbered release.
+After publishing a numbered `cable-v*` release with a `Cable.apk` asset, run
+`bash scripts/update-cable-current.sh` to copy the highest numbered Cable APK to
+the permanent download. A short link should point to this permanent URL, not
+to a numbered release. GitHub Actions cannot run unattended on this account
+while its billing lock is active, so this step is currently part of publishing.
