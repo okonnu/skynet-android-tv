@@ -6,6 +6,9 @@
 - The WebView is laid out at root size divided by selected zoom, then the
   Android View is scaled to fill the root. Keep pointer hover, click, and edge
   scroll coordinates mapped between root and WebView space.
+- Edge scrolling must dispatch mouse wheel events at the pointer. Do not call
+  `webView.scrollBy()`: it pans the oversized WebView canvas and exposes blank
+  areas instead of scrolling the website's own content.
 - Fullscreen video is a separate unscaled view on the root.
 - Before publishing a zoom change, test a cold launch and page navigation at
   60%. Check the outer surface dimensions and pointer alignment, not only the

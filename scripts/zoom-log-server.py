@@ -16,7 +16,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bind", required=True, help="LAN IPv4 address of this PC")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--required-version", default="1.2.8",
+    parser.add_argument("--required-version", default="1.2.9",
                         help="Accept only this Cable version and its app-process logcat")
     args = parser.parse_args()
     bind_address = ipaddress.ip_address(args.bind)

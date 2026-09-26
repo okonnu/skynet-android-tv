@@ -63,6 +63,8 @@ Cable now keeps the browser's own zoom at 100%, lays out a larger WebView, and
 scales that Android view to the selected size. Websites cannot change the outer
 Android transform. The remote pointer's clicks, hover, and edge scrolling are
 mapped into the larger WebView. Fullscreen video uses a separate unscaled view.
+At screen edges, the remote pointer sends mouse wheel input to the website so
+its own scrollable content moves without panning the oversized WebView canvas.
 At low zoom levels the larger surface can use more memory and rendering work.
 
 ```sh
@@ -89,7 +91,7 @@ while its billing lock is active, so this step is currently part of publishing.
 
 ## Temporary LAN zoom diagnostics
 
-Cable 1.2.8 is an experimental diagnostic build for the TV zoom issue. It uses
+Cable 1.2.9 is an experimental diagnostic build for the TV zoom issue. It uses
 an outer Android view transform instead of WebView page zoom. It records
 the selected zoom, WebView scale changes, viewport measurements at short delays
 around navigation, and logcat entries visible to its own app process. Android
@@ -107,9 +109,9 @@ It creates `.diagnostics/token` and appends events to
 `.diagnostics/events.jsonl`. Both are ignored by git. Build the diagnostic APK
 with `CABLE_DIAG_URL=http://192.168.1.224:8765/event` and
 `CABLE_DIAG_TOKEN` set to the contents of `.diagnostics/token`. The IP must be
-updated if this PC's Wi-Fi address changes. The published 1.2.8 APK was built
-with these values. The receiver currently keeps only 1.2.8 sessions so an
-older TV app cannot refill the cleared logs. Stop the receiver and remove the
+updated if this PC's Wi-Fi address changes. The published 1.2.9 APK was built
+with these values. The receiver currently keeps only 1.2.9 sessions so an
+older TV app cannot mix events into the new test. Stop the receiver and remove the
 temporary firewall rule
 after the TV test, then remove this diagnostic instrumentation in the next
 normal release.

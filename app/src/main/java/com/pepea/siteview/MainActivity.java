@@ -28,6 +28,7 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
@@ -255,6 +256,11 @@ public final class MainActivity extends Activity {
     private long previousCursorFrameNanos;
     private long cursorMovementStartedNanos;
     private long previousHoverDispatchNanos;
+    private long previousWheelDispatchNanos;
+    private float pendingEdgeScrollX;
+    private float pendingEdgeScrollY;
+    private float wheelHorizontalFactor;
+    private float wheelVerticalFactor;
     private String lastAllowedUrl;
     private boolean updateCheckInFlight;
     private boolean updateReceiverRegistered;
@@ -285,6 +291,9 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        ViewConfiguration viewConfiguration = ViewConfiguration.get(this);
+        wheelHorizontalFactor = Math.max(1f, viewConfiguration.getScaledHorizontalScrollFactor());
+        wheelVerticalFactor = Math.max(1f, viewConfiguration.getScaledVerticalScrollFactor());
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         if ("cable".equals(BuildConfig.FLAVOR)) {
@@ -1313,6 +1322,9 @@ public final class MainActivity extends Activity {
             cursorFramePosted = false;
             previousCursorFrameNanos = 0L;
             cursorMovementStartedNanos = 0L;
+            previousWheelDispatchNanos = 0L;
+            pendingEdgeScrollX = 0f;
+            pendingEdgeScrollY = 0f;
             return;
         }
 
@@ -1353,9 +1365,19 @@ public final class MainActivity extends Activity {
         } else if (cursorRightHeld && cursorX >= root.getWidth() - edge) {
             scrollX = Math.max(1, Math.round(scrollPerFrame));
         }
-        if (scrollX != 0 || scrollY != 0) {
-            float scale = tvSurfaceScale();
-            webView.scrollBy(Math.round(scrollX / scale), Math.round(scrollY / scale));
+        if ((scrollX != 0 || scrollY != 0) && !cursorOverZoomBadge()) {
+            pendingEdgeScrollX += scrollX;
+            pendingEdgeScrollY += scrollY;
+            if (previousWheelDispatchNanos == 0L
+                    || frameTimeNanos - previousWheelDispatchNanos >= 33_000_000L) {
+                dispatchEdgeWheel(pendingEdgeScrollX, pendingEdgeScrollY);
+                pendingEdgeScrollX = 0f;
+                pendingEdgeScrollY = 0f;
+                previousWheelDispatchNanos = frameTimeNanos;
+            }
+        } else {
+            pendingEdgeScrollX = 0f;
+            pendingEdgeScrollY = 0f;
         }
 
         updateCursorPosition();
@@ -1364,6 +1386,30 @@ public final class MainActivity extends Activity {
             previousHoverDispatchNanos = frameTimeNanos;
         }
         choreographer.postFrameCallback(cursorFrameCallback);
+    }
+
+    private void dispatchEdgeWheel(float screenDeltaX, float screenDeltaY) {
+        if (webView.getWidth() == 0 || webView.getHeight() == 0) {
+            return;
+        }
+        MotionEvent.PointerProperties pointer = new MotionEvent.PointerProperties();
+        pointer.id = 0;
+        pointer.toolType = MotionEvent.TOOL_TYPE_MOUSE;
+        MotionEvent.PointerCoords coordinates = new MotionEvent.PointerCoords();
+        coordinates.x = webViewX(cursorX);
+        coordinates.y = webViewY(cursorY);
+        float scale = tvSurfaceScale();
+        coordinates.setAxisValue(MotionEvent.AXIS_HSCROLL,
+                screenDeltaX / scale / wheelHorizontalFactor);
+        coordinates.setAxisValue(MotionEvent.AXIS_VSCROLL,
+                -screenDeltaY / scale / wheelVerticalFactor);
+        long now = SystemClock.uptimeMillis();
+        MotionEvent wheel = MotionEvent.obtain(now, now, MotionEvent.ACTION_SCROLL, 1,
+                new MotionEvent.PointerProperties[]{pointer},
+                new MotionEvent.PointerCoords[]{coordinates},
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0);
+        webView.dispatchGenericMotionEvent(wheel);
+        wheel.recycle();
     }
 
     private void updateCursorPosition() {
@@ -1483,6 +1529,9 @@ public final class MainActivity extends Activity {
         }
         previousCursorFrameNanos = 0L;
         cursorMovementStartedNanos = 0L;
+        previousWheelDispatchNanos = 0L;
+        pendingEdgeScrollX = 0f;
+        pendingEdgeScrollY = 0f;
         if (cursorView != null && cursorView.getVisibility() == View.VISIBLE) {
             scheduleCursorHide();
         }

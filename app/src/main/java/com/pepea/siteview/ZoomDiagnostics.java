@@ -122,6 +122,8 @@ final class ZoomDiagnostics {
         event.put("webViewScale", view == null ? JSONObject.NULL : view.getScale());
         event.put("webViewWidth", view == null ? JSONObject.NULL : view.getWidth());
         event.put("webViewHeight", view == null ? JSONObject.NULL : view.getHeight());
+        event.put("webViewScrollX", view == null ? JSONObject.NULL : view.getScrollX());
+        event.put("webViewScrollY", view == null ? JSONObject.NULL : view.getScrollY());
         event.put("surfaceScaleX", view == null ? JSONObject.NULL : view.getScaleX());
         event.put("surfaceScaleY", view == null ? JSONObject.NULL : view.getScaleY());
         event.put("displayWidth", view == null ? JSONObject.NULL : view.getWidth() * view.getScaleX());
