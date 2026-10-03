@@ -51,6 +51,14 @@ Then build with:
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
+The TV-friendly Skynet download is `https://tinyurl.com/skynet4tv`. It points
+to the stable release asset at
+`https://github.com/okonnu/skynet-android-tv/releases/download/skynet-current/Skynet.apk`.
+After publishing a numbered `v*` Skynet release with a `Skynet.apk` asset, run
+`bash scripts/update-skynet-current.sh` to refresh that asset without changing
+the short link. The `skynet-current` release is a prerelease so it does not
+replace the latest numbered release used by the app's updater.
+
 ## Cable edition
 
 The Cable product flavor is a separate Android TV app with the same simple native
