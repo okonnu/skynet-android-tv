@@ -55,9 +55,10 @@ The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 The Cable product flavor is a separate Android TV app with the same simple native
 matte-black arrow pointer. D-pad arrows move it, Enter activates the element below
-it, and the loaded website keeps its original styling and sizing. The small
-upper-right badge displays the app version only. Fullscreen video uses a
-separate view.
+it, and the loaded website keeps its original styling and sizing. Cable opens
+pantyflix.com by default on first install or this update. Click the unchanged
+upper-right version badge to choose another website; the choice is saved for
+later launches. Fullscreen video uses a separate view.
 At screen edges, the remote pointer sends mouse wheel input to the website so
 its own scrollable content moves without panning the WebView canvas.
 

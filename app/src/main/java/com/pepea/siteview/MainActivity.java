@@ -67,6 +67,9 @@ public final class MainActivity extends Activity {
     private static final String KEY_HOME_URL = "home_url";
     private static final String KEY_SITE_SETUP_SCHEMA = "site_setup_schema";
     private static final int SITE_SETUP_SCHEMA = 1;
+    private static final String KEY_CABLE_DEFAULT_SCHEMA = "cable_default_schema";
+    private static final int CABLE_DEFAULT_SCHEMA = 1;
+    private static final String CABLE_DEFAULT_URL = "https://pantyflix.com";
     private static final String KEY_AD_BLOCKING = "ad_blocking";
     private static final String KEY_UPDATE_LAST_CHECK = "update_last_check";
     private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
@@ -301,6 +304,15 @@ public final class MainActivity extends Activity {
                     .putInt(KEY_SITE_SETUP_SCHEMA, SITE_SETUP_SCHEMA)
                     .apply();
         }
+        boolean resetCableSite = "cable".equals(BuildConfig.FLAVOR)
+                && preferences.getInt(KEY_CABLE_DEFAULT_SCHEMA, 0) < CABLE_DEFAULT_SCHEMA;
+        if (resetCableSite) {
+            // Set the new Cable home once; later choices from the badge are preserved.
+            preferences.edit()
+                    .putString(KEY_HOME_URL, CABLE_DEFAULT_URL)
+                    .putInt(KEY_CABLE_DEFAULT_SCHEMA, CABLE_DEFAULT_SCHEMA)
+                    .apply();
+        }
         UiModeManager uiModeManager = (UiModeManager) getSystemService(UI_MODE_SERVICE);
         isTvDevice = uiModeManager != null &&
                 uiModeManager.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION;
@@ -314,7 +326,7 @@ public final class MainActivity extends Activity {
             showUrlDialog(false);
         } else {
             lastAllowedUrl = homeUrl;
-            if (savedInstanceState == null || resetSavedSite
+            if (savedInstanceState == null || resetSavedSite || resetCableSite
                     || webView.restoreState(savedInstanceState) == null) {
                 webView.loadUrl(homeUrl);
             }
@@ -335,9 +347,16 @@ public final class MainActivity extends Activity {
         versionBadge.setTextSize(9);
         versionBadge.setIncludeFontPadding(false);
         versionBadge.setPadding(dp(5), dp(3), dp(5), dp(3));
-        versionBadge.setClickable(false);
-        versionBadge.setFocusable(false);
-        versionBadge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        if ("cable".equals(BuildConfig.FLAVOR)) {
+            versionBadge.setContentDescription("Version " + getVersionLabel() + ". Change website.");
+            versionBadge.setOnClickListener(ignored -> {
+                if (!urlDialogVisible) showUrlDialog(true);
+            });
+        } else {
+            versionBadge.setClickable(false);
+            versionBadge.setFocusable(false);
+            versionBadge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
         versionBadge.setElevation(dp(24));
         GradientDrawable badgeBackground = new GradientDrawable();
         badgeBackground.setColor(Color.argb(120, 0, 0, 0));
@@ -927,10 +946,11 @@ public final class MainActivity extends Activity {
             enableImmersiveMode();
         });
         dialog.show();
-        if (isTvDevice) {
+        if (isTvDevice && !cancelable) {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).requestFocus();
         } else {
             input.requestFocus();
+            input.selectAll();
         }
     }
 
@@ -1178,7 +1198,7 @@ public final class MainActivity extends Activity {
         } else if (cursorRightHeld && cursorX >= root.getWidth() - edge) {
             scrollX = Math.max(1, Math.round(scrollPerFrame));
         }
-        if (scrollX != 0 || scrollY != 0) {
+        if ((scrollX != 0 || scrollY != 0) && !cursorOverVersionBadge()) {
             pendingEdgeScrollX += scrollX;
             pendingEdgeScrollY += scrollY;
             if (previousWheelDispatchNanos == 0L
@@ -1234,6 +1254,9 @@ public final class MainActivity extends Activity {
         if (webView.getWidth() == 0 || webView.getHeight() == 0) {
             return;
         }
+        if (cursorOverVersionBadge()) {
+            return;
+        }
         long now = SystemClock.uptimeMillis();
         MotionEvent hover = MotionEvent.obtain(
                 now, now, MotionEvent.ACTION_HOVER_MOVE,
@@ -1257,6 +1280,11 @@ public final class MainActivity extends Activity {
     }
 
     private void clickAtCursor() {
+        if (cursorOverVersionBadge()) {
+            versionBadge.performClick();
+            scheduleCursorHide();
+            return;
+        }
         long downTime = SystemClock.uptimeMillis();
         MotionEvent down = MotionEvent.obtain(
                 downTime, downTime, MotionEvent.ACTION_DOWN,
@@ -1273,6 +1301,12 @@ public final class MainActivity extends Activity {
         up.recycle();
         dispatchHoverEvent();
         scheduleCursorHide();
+    }
+
+    private boolean cursorOverVersionBadge() {
+        return "cable".equals(BuildConfig.FLAVOR) && versionBadge.isShown()
+                && cursorX >= versionBadge.getLeft() && cursorX < versionBadge.getRight()
+                && cursorY >= versionBadge.getTop() && cursorY < versionBadge.getBottom();
     }
 
     @Override

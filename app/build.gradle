@@ -26,8 +26,8 @@ android {
         cable {
             dimension "navigation"
             applicationId "com.pepea.cable"
-            versionCode 13
-            versionName "1.3.0"
+            versionCode 14
+            versionName "1.3.1"
             buildConfigField "boolean", "POINTER_ENABLED", "true"
             buildConfigField "String", "UPDATE_TAG_PREFIX", "\"cable-v\""
             buildConfigField "String", "UPDATE_ASSET_NAME", "\"Cable.apk\""
