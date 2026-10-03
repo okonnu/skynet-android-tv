@@ -7,7 +7,6 @@ local.properties
 *.keystore
 *.apk
 public-apks/
-.diagnostics/
 .idea/
 *.iml
 .DS_Store

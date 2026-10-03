@@ -43,7 +43,6 @@ import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -72,10 +71,7 @@ public final class MainActivity extends Activity {
     private static final String KEY_UPDATE_LAST_CHECK = "update_last_check";
     private static final String KEY_UPDATE_DOWNLOAD_ID = "update_download_id";
     private static final String KEY_UPDATE_VERSION = "update_version";
-    private static final String KEY_ZOOM_PERCENT = "zoom_percent";
     private static final int FILE_CHOOSER_REQUEST = 41;
-    private static final int DEFAULT_PAGE_SCALE_PERCENT = 90;
-    private static final int[] ZOOM_OPTIONS = {50, 60, 70, 80, 90, 100, 110};
     private static final long UPDATE_CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L;
     private static final String GITHUB_RELEASES_URL =
             "https://api.github.com/repos/okonnu/skynet-android-tv/releases?per_page=20";
@@ -231,7 +227,6 @@ public final class MainActivity extends Activity {
     private SharedPreferences preferences;
     private boolean adBlockingEnabled;
     private WebView webView;
-    private ZoomDiagnostics zoomDiagnostics;
     private AdBlocker adBlocker;
     private DownloadManager downloadManager;
     private ValueCallback<Uri[]> fileCallback;
@@ -240,8 +235,6 @@ public final class MainActivity extends Activity {
     private FrameLayout root;
     private ProgressBar loadingSpinner;
     private TextView versionBadge;
-    private PopupMenu zoomMenu;
-    private boolean zoomMenuOpen;
     private boolean isTvDevice;
     private TvCursorView cursorView;
     private float cursorX;
@@ -296,11 +289,6 @@ public final class MainActivity extends Activity {
         wheelVerticalFactor = Math.max(1f, viewConfiguration.getScaledVerticalScrollFactor());
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        if ("cable".equals(BuildConfig.FLAVOR)) {
-            zoomDiagnostics = new ZoomDiagnostics(BuildConfig.DIAG_URL, BuildConfig.DIAG_TOKEN);
-            zoomDiagnostics.startLogcat();
-            zoomDiagnostics.event("onCreate.preferences", null, selectedZoomPercent());
-        }
         downloadManager = getSystemService(DownloadManager.class);
         registerUpdateDownloadReceiver();
         adBlockingEnabled = preferences.getBoolean(KEY_AD_BLOCKING, true);
@@ -320,9 +308,6 @@ public final class MainActivity extends Activity {
         buildInterface();
         enableImmersiveMode();
         configureWebView();
-        zoomEvent("onCreate.webViewReady", webView);
-        zoomSnapshot("onCreate.webViewReady", webView, 0);
-        zoomSnapshot("onCreate.webViewReady", webView, 2000);
 
         String homeUrl = preferences.getString(KEY_HOME_URL, "");
         if (homeUrl == null || homeUrl.isEmpty()) {
@@ -341,46 +326,18 @@ public final class MainActivity extends Activity {
         webView = new WebView(this);
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
-        if (useTvZoomControl()) {
-            // Do not show the unscaled page before the first TV layout pass.
-            webView.setVisibility(View.INVISIBLE);
-            webView.addOnLayoutChangeListener((view, left, top, right, bottom,
-                                               oldLeft, oldTop, oldRight, oldBottom) -> {
-                if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
-                    applyTvSurfaceScale();
-                }
-            });
-        }
         root.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        if (useTvZoomControl()) {
-            root.addOnLayoutChangeListener((view, left, top, right, bottom,
-                                            oldLeft, oldTop, oldRight, oldBottom) -> {
-                if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
-                    applyTvSurfaceScale();
-                }
-            });
-        }
 
         versionBadge = new TextView(this);
         versionBadge.setText(getVersionLabel());
         versionBadge.setTextColor(Color.argb(210, 255, 255, 255));
         versionBadge.setTextSize(9);
         versionBadge.setIncludeFontPadding(false);
-        versionBadge.setPadding(dp(8), dp(6), dp(8), dp(6));
-        if (useTvZoomControl()) {
-            versionBadge.setMinWidth(dp(92));
-            versionBadge.setMinHeight(dp(36));
-            versionBadge.setGravity(android.view.Gravity.CENTER);
-            versionBadge.setClickable(true);
-            versionBadge.setFocusable(true);
-            versionBadge.setOnClickListener(ignored -> showZoomMenu());
-            updateZoomBadge();
-        } else {
-            versionBadge.setClickable(false);
-            versionBadge.setFocusable(false);
-            versionBadge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        }
+        versionBadge.setPadding(dp(5), dp(3), dp(5), dp(3));
+        versionBadge.setClickable(false);
+        versionBadge.setFocusable(false);
+        versionBadge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         versionBadge.setElevation(dp(24));
         GradientDrawable badgeBackground = new GradientDrawable();
         badgeBackground.setColor(Color.argb(120, 0, 0, 0));
@@ -412,7 +369,6 @@ public final class MainActivity extends Activity {
 
         setContentView(root);
         root.post(() -> {
-            applyTvSurfaceScale();
             if (POINTER_ENABLED) {
                 cursorX = root.getWidth() / 2f;
                 cursorY = root.getHeight() / 2f;
@@ -464,131 +420,11 @@ public final class MainActivity extends Activity {
 
         webView.setWebViewClient(new SiteViewClient());
         webView.setWebChromeClient(new SiteChromeClient());
-        configureWebViewScale(webView);
-    }
-
-    private boolean useTvZoomControl() {
-        return isTvDevice && "cable".equals(BuildConfig.FLAVOR);
-    }
-
-    private int selectedZoomPercent() {
-        int selected = preferences.getInt(KEY_ZOOM_PERCENT, DEFAULT_PAGE_SCALE_PERCENT);
-        for (int option : ZOOM_OPTIONS) {
-            if (option == selected) {
-                return selected;
-            }
-        }
-        return DEFAULT_PAGE_SCALE_PERCENT;
-    }
-
-    private void configureWebViewScale(WebView view) {
-        // Cable uses an outer Android View transform, not WebView page zoom.
-        view.getSettings().setLoadWithOverviewMode(false);
-        view.setInitialScale(useTvZoomControl() ? 100 : DEFAULT_PAGE_SCALE_PERCENT);
-        zoomEvent("setInitialScale", view);
-    }
-
-    private float tvSurfaceScale() {
-        return useTvZoomControl() ? selectedZoomPercent() / 100f : 1f;
-    }
-
-    private void applyTvSurfaceScale() {
-        if (!useTvZoomControl() || root == null || webView == null
-                || root.getWidth() <= 0 || root.getHeight() <= 0) {
-            return;
-        }
-        float scale = tvSurfaceScale();
-        int width = Math.max(1, (int) Math.ceil(root.getWidth() / scale));
-        int height = Math.max(1, (int) Math.ceil(root.getHeight() / scale));
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) webView.getLayoutParams();
-        if (params.width != width || params.height != height) {
-            if (customView == null) {
-                webView.setVisibility(View.INVISIBLE);
-            }
-            params.width = width;
-            params.height = height;
-            webView.setLayoutParams(params);
-        }
-        webView.setPivotX(0f);
-        webView.setPivotY(0f);
-        webView.setScaleX(scale);
-        webView.setScaleY(scale);
-        if (customView == null && webView.getWidth() == width && webView.getHeight() == height
-                && webView.getVisibility() == View.INVISIBLE) {
-            webView.setVisibility(View.VISIBLE);
-        }
-        zoomEvent("surfaceScale.applied", webView);
-        zoomSnapshot("surfaceScale.applied", webView, 300);
-    }
-
-    private float webViewX(float screenX) {
-        return screenX / tvSurfaceScale();
-    }
-
-    private float webViewY(float screenY) {
-        return screenY / tvSurfaceScale();
-    }
-
-    private void zoomEvent(String phase, WebView view) {
-        if (zoomDiagnostics != null) zoomDiagnostics.event(phase, view, selectedZoomPercent());
-    }
-
-    private void zoomSnapshot(String phase, WebView view, long delayMs) {
-        if (zoomDiagnostics != null) zoomDiagnostics.snapshot(phase, view, selectedZoomPercent(), delayMs);
-    }
-
-    private void zoomNavigationSamples(String phase, WebView view) {
-        zoomEvent(phase, view);
-        zoomSnapshot(phase, view, 0);
-        zoomSnapshot(phase, view, 250);
-        zoomSnapshot(phase, view, 1500);
-        zoomSnapshot(phase, view, 5000);
-    }
-
-    private void updateZoomBadge() {
-        int percent = selectedZoomPercent();
-        versionBadge.setText(getVersionLabel() + "  " + percent + "%");
-        versionBadge.setContentDescription("Version " + getVersionLabel() +
-                ". Zoom " + percent + " percent. Select zoom.");
-    }
-
-    private void showZoomMenu() {
-        if (!useTvZoomControl() || zoomMenuOpen) {
-            return;
-        }
-        stopCursorAnimation();
-        if (cursorView != null) {
-            cursorView.setVisibility(View.GONE);
-        }
-        PopupMenu menu = new PopupMenu(this, versionBadge, android.view.Gravity.END);
-        int selected = selectedZoomPercent();
-        for (int option : ZOOM_OPTIONS) {
-            menu.getMenu().add(0, option, option, option + "%")
-                    .setCheckable(true).setChecked(option == selected);
-        }
-        menu.getMenu().setGroupCheckable(0, true, true);
-        menu.setOnMenuItemClickListener(item -> {
-            preferences.edit().putInt(KEY_ZOOM_PERCENT, item.getItemId()).apply();
-            zoomEvent("zoomMenu.selected", webView);
-            updateZoomBadge();
-            applyTvSurfaceScale();
-            zoomNavigationSamples("zoomMenu.applied", webView);
-            return true;
-        });
-        menu.setOnDismissListener(ignored -> {
-            zoomMenuOpen = false;
-            zoomMenu = null;
-            enableImmersiveMode();
-        });
-        zoomMenu = menu;
-        zoomMenuOpen = true;
-        menu.show();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        zoomNavigationSamples("onResume", webView);
         installCompletedUpdateIfReady();
         maybeCheckForUpdate();
     }
@@ -841,12 +677,6 @@ public final class MainActivity extends Activity {
 
     private final class SiteViewClient extends WebViewClient {
         @Override
-        public void onScaleChanged(WebView view, float oldScale, float newScale) {
-            super.onScaleChanged(view, oldScale, newScale);
-            zoomEvent("onScaleChanged." + oldScale + ".to." + newScale, view);
-            zoomSnapshot("onScaleChanged", view, 100);
-        }
-        @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             return adBlocker.intercept(request, adBlockingEnabled);
         }
@@ -862,8 +692,6 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
-            zoomNavigationSamples("onPageStarted.beforeScale", view);
-            configureWebViewScale(view);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
                 showLoadingSpinner();
                 return;
@@ -878,22 +706,14 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageCommitVisible(WebView view, String url) {
             super.onPageCommitVisible(view, url);
-            zoomNavigationSamples("onPageCommitVisible", view);
             if (isAllowedTopLevelUrl(Uri.parse(url))) {
                 injectNavigationStyling(view);
             }
         }
 
         @Override
-        public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
-            super.doUpdateVisitedHistory(view, url, isReload);
-            zoomNavigationSamples("doUpdateVisitedHistory.reload=" + isReload, view);
-        }
-
-        @Override
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
-            zoomNavigationSamples("onPageFinished", view);
             if (!isAllowedTopLevelUrl(Uri.parse(url))) {
                 return;
             }
@@ -911,7 +731,6 @@ public final class MainActivity extends Activity {
         @Override
         public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
             super.onReceivedError(view, request, error);
-            zoomEvent("onReceivedError." + error.getErrorCode(), view);
             if (request.isForMainFrame()) {
                 hideLoadingSpinner();
                 Toast.makeText(MainActivity.this, "Unable to load the website", Toast.LENGTH_LONG).show();
@@ -921,15 +740,9 @@ public final class MainActivity extends Activity {
     }
 
     private final class SiteChromeClient extends WebChromeClient {
-        private int lastProgressBucket = -1;
         @Override
         public void onProgressChanged(WebView view, int newProgress) {
             super.onProgressChanged(view, newProgress);
-            int bucket = newProgress / 25;
-            if (bucket != lastProgressBucket) {
-                lastProgressBucket = bucket;
-                zoomEvent("progress." + newProgress, view);
-            }
             if (newProgress >= 100) {
                 hideLoadingSpinner();
             } else if (isAllowedTopLevelUrl(Uri.parse(view.getUrl() == null ? "" : view.getUrl()))) {
@@ -1188,7 +1001,7 @@ public final class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (urlDialogVisible || zoomMenuOpen || customView != null) {
+        if (urlDialogVisible || customView != null) {
             return super.dispatchKeyEvent(event);
         }
 
@@ -1365,7 +1178,7 @@ public final class MainActivity extends Activity {
         } else if (cursorRightHeld && cursorX >= root.getWidth() - edge) {
             scrollX = Math.max(1, Math.round(scrollPerFrame));
         }
-        if ((scrollX != 0 || scrollY != 0) && !cursorOverZoomBadge()) {
+        if (scrollX != 0 || scrollY != 0) {
             pendingEdgeScrollX += scrollX;
             pendingEdgeScrollY += scrollY;
             if (previousWheelDispatchNanos == 0L
@@ -1396,13 +1209,12 @@ public final class MainActivity extends Activity {
         pointer.id = 0;
         pointer.toolType = MotionEvent.TOOL_TYPE_MOUSE;
         MotionEvent.PointerCoords coordinates = new MotionEvent.PointerCoords();
-        coordinates.x = webViewX(cursorX);
-        coordinates.y = webViewY(cursorY);
-        float scale = tvSurfaceScale();
+        coordinates.x = cursorX;
+        coordinates.y = cursorY;
         coordinates.setAxisValue(MotionEvent.AXIS_HSCROLL,
-                screenDeltaX / scale / wheelHorizontalFactor);
+                screenDeltaX / wheelHorizontalFactor);
         coordinates.setAxisValue(MotionEvent.AXIS_VSCROLL,
-                -screenDeltaY / scale / wheelVerticalFactor);
+                -screenDeltaY / wheelVerticalFactor);
         long now = SystemClock.uptimeMillis();
         MotionEvent wheel = MotionEvent.obtain(now, now, MotionEvent.ACTION_SCROLL, 1,
                 new MotionEvent.PointerProperties[]{pointer},
@@ -1422,13 +1234,10 @@ public final class MainActivity extends Activity {
         if (webView.getWidth() == 0 || webView.getHeight() == 0) {
             return;
         }
-        if (cursorOverZoomBadge()) {
-            return;
-        }
         long now = SystemClock.uptimeMillis();
         MotionEvent hover = MotionEvent.obtain(
                 now, now, MotionEvent.ACTION_HOVER_MOVE,
-                webViewX(cursorX), webViewY(cursorY), 0);
+                cursorX, cursorY, 0);
         hover.setSource(InputDevice.SOURCE_MOUSE);
         webView.dispatchGenericMotionEvent(hover);
         hover.recycle();
@@ -1441,43 +1250,29 @@ public final class MainActivity extends Activity {
         long now = SystemClock.uptimeMillis();
         MotionEvent exit = MotionEvent.obtain(
                 now, now, MotionEvent.ACTION_HOVER_EXIT,
-                webViewX(cursorX), webViewY(cursorY), 0);
+                cursorX, cursorY, 0);
         exit.setSource(InputDevice.SOURCE_MOUSE);
         webView.dispatchGenericMotionEvent(exit);
         exit.recycle();
     }
 
     private void clickAtCursor() {
-        zoomEvent("remoteClick", webView);
-        if (cursorOverZoomBadge()) {
-            versionBadge.performClick();
-            return;
-        }
         long downTime = SystemClock.uptimeMillis();
         MotionEvent down = MotionEvent.obtain(
                 downTime, downTime, MotionEvent.ACTION_DOWN,
-                webViewX(cursorX), webViewY(cursorY), 0);
+                cursorX, cursorY, 0);
         down.setSource(InputDevice.SOURCE_TOUCHSCREEN);
         webView.dispatchTouchEvent(down);
         down.recycle();
 
         MotionEvent up = MotionEvent.obtain(
                 downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP,
-                webViewX(cursorX), webViewY(cursorY), 0);
+                cursorX, cursorY, 0);
         up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
         webView.dispatchTouchEvent(up);
         up.recycle();
-        zoomSnapshot("remoteClick", webView, 800);
         dispatchHoverEvent();
         scheduleCursorHide();
-    }
-
-    private boolean cursorOverZoomBadge() {
-        if (!useTvZoomControl() || versionBadge == null || !versionBadge.isShown()) {
-            return false;
-        }
-        return cursorX >= versionBadge.getLeft() && cursorX < versionBadge.getRight()
-                && cursorY >= versionBadge.getTop() && cursorY < versionBadge.getBottom();
     }
 
     @Override
@@ -1492,9 +1287,7 @@ public final class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (zoomMenuOpen && zoomMenu != null) {
-            zoomMenu.dismiss();
-        } else if (customView != null) {
+        if (customView != null) {
             hideCustomView();
         } else if (webView.canGoBack()) {
             webView.goBack();
@@ -1513,7 +1306,6 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
-        zoomEvent("onPause", webView);
         stopCursorAnimation();
         super.onPause();
     }
@@ -1545,12 +1337,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        zoomEvent("onDestroy", webView);
-        if (zoomDiagnostics != null) zoomDiagnostics.close();
         stopCursorAnimation();
-        if (zoomMenu != null) {
-            zoomMenu.dismiss();
-        }
         if (updateReceiverRegistered) {
             unregisterReceiver(updateDownloadReceiver);
             updateReceiverRegistered = false;
