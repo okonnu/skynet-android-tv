@@ -8,6 +8,9 @@ until a website has been saved.
 
 It supports phones, tablets, and Android/Google TV devices such as onn. streaming boxes.
 The app shows the configured website in an immersive, edge-to-edge WebView.
+Skynet 2.2.1 and Cable 1.3.2 also support Android API 22 and newer, including
+Fire OS 5/6 Fire TV Sticks. Fire TV Sticks running Vega OS require a separate
+Vega application package; they cannot install Android APKs.
 
 ## Included behavior
 

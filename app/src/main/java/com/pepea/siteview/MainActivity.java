@@ -288,11 +288,17 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ViewConfiguration viewConfiguration = ViewConfiguration.get(this);
-        wheelHorizontalFactor = Math.max(1f, viewConfiguration.getScaledHorizontalScrollFactor());
-        wheelVerticalFactor = Math.max(1f, viewConfiguration.getScaledVerticalScrollFactor());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            wheelHorizontalFactor = Math.max(1f, viewConfiguration.getScaledHorizontalScrollFactor());
+            wheelVerticalFactor = Math.max(1f, viewConfiguration.getScaledVerticalScrollFactor());
+        } else {
+            // Fire OS 5/6 predate the scaled wheel-factor APIs.
+            wheelHorizontalFactor = dp(48);
+            wheelVerticalFactor = dp(48);
+        }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        downloadManager = getSystemService(DownloadManager.class);
+        downloadManager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
         registerUpdateDownloadReceiver();
         adBlockingEnabled = preferences.getBoolean(KEY_AD_BLOCKING, true);
         boolean resetSavedSite = preferences.getInt(KEY_SITE_SETUP_SCHEMA, 0) < SITE_SETUP_SCHEMA;
@@ -431,7 +437,9 @@ public final class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
         settings.setLoadWithOverviewMode(false);
         settings.setUseWideViewPort(true);
-        settings.setSafeBrowsingEnabled(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            settings.setSafeBrowsingEnabled(true);
+        }
 
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
@@ -751,6 +759,14 @@ public final class MainActivity extends Activity {
         public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
             super.onReceivedError(view, request, error);
             if (request.isForMainFrame()) {
+                hideLoadingSpinner();
+                Toast.makeText(MainActivity.this, "Unable to load the website", Toast.LENGTH_LONG).show();
+            }
+        }
+
+        @Override
+        public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
                 hideLoadingSpinner();
                 Toast.makeText(MainActivity.this, "Unable to load the website", Toast.LENGTH_LONG).show();
             }
